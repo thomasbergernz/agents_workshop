@@ -32,3 +32,22 @@ def test_model_authored_sql_cannot_reach_python_objects(db):
     message = str(caught.value)
     assert "Python Object" not in message, message
     assert ".py" not in message, message
+
+
+def test_an_account_whose_jobs_are_all_still_running_still_opens(tmp_path):
+    """MAX(end_ts) is NULL when every job is running -- rows present, window
+    unknown. That raised SystemExit, which `except Exception` cannot catch, so
+    one such account aborted the whole unattended batch."""
+    import pandas as pd
+
+    from kowhai_agent import Database
+    pd.DataFrame({
+        "submit_ts": pd.to_datetime(["2026-07-06"]),
+        "end_ts": pd.to_datetime([None]),
+        "account": ["bbb"], "job_name": ["k"], "partition": ["large"],
+        "project_name": ["p"], "institution": ["i"], "state": ["RUNNING"],
+        "user": ["u"], "last_reason": [None],
+    }).to_parquet(tmp_path / "jobs.parquet", index=False)
+    scoped = Database.open(tmp_path, account="bbb")
+    assert scoped.sql("SELECT COUNT(*) FROM jobs").fetchone()[0] == 1
+    assert scoped.window_end is not None

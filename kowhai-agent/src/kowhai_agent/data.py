@@ -24,8 +24,6 @@ class Database:
     connection: duckdb.DuckDBPyConnection
     window_start: datetime
     window_end: datetime
-    data_dir: Path
-    account: str | None = None
 
     @classmethod
     def open(cls, data_dir: Path, memory_limit: str = MEMORY_LIMIT,
@@ -54,11 +52,14 @@ class Database:
                         [account])
         if sched.exists():
             con.execute(f"CREATE TABLE sched_15m AS SELECT * FROM '{sched}'")
-        lo, hi = con.sql("SELECT MIN(submit_ts), MAX(end_ts) FROM jobs").fetchone()
+        # COALESCE because MAX(end_ts) is NULL when every job is still running:
+        # the rows are there, only the far edge of the window is unknown. This
+        # used to raise, and a raise here aborts the whole advisory batch.
+        lo, hi = con.sql("SELECT MIN(submit_ts), COALESCE(MAX(end_ts), MAX(submit_ts)) "
+                         "FROM jobs").fetchone()
         if lo is None or hi is None:
-            raise SystemExit(
-                f"No jobs in {jobs}" + (f" for account {account!r}." if account else ".")
-                + " Nothing to query.")
+            raise ValueError(
+                f"No jobs in {jobs}" + (f" for account {account!r}." if account else "."))
 
         # Order matters: lock_configuration freezes whatever is set at the time,
         # so every limit has to be in place before it. Without a memory_limit
@@ -75,11 +76,7 @@ class Database:
         con.execute("SET python_enable_replacements = false")
         con.execute("SET disabled_filesystems = 'LocalFileSystem'")
         con.execute("SET lock_configuration = true")
-        return cls(con, lo, hi, data_dir, account)
-
-    def scoped(self, account: str) -> Database:
-        """The same data, holding one account only. See open()."""
-        return Database.open(self.data_dir, account=account)
+        return cls(con, lo, hi)
 
     def sql(self, query: str):
         return self.connection.sql(query)

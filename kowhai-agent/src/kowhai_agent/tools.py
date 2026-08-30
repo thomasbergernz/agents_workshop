@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Literal, get_args
 
 import duckdb
+from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
 from .data import Database
 from .tooling import Toolbox, ToolFailure, tool
@@ -48,16 +49,43 @@ MAX_RESULT_CHARS = 20_000
 
 
 # job_name, project_name and user are chosen by whoever ran sbatch. A newline in
-# one forges a whole extra table row, and a pipe opens a column -- both
-# indistinguishable from real data at the point the model reads them, inside an
-# unattended job whose output a person is expected to skim and forward. The
-# characters that carry meaning in the rendering are escaped, so an injected
-# string can still be read, but only ever as one value in one cell.
-_STRUCTURAL = str.maketrans({"\n": "\\n", "\r": "\\r", "\t": "\\t", "|": "\\|"})
+# one forges a whole extra table row and a pipe opens a column, both
+# indistinguishable from real data where the model reads them. What counts as
+# structure depends on the rendering, and escaping more than that has a cost:
+# list_values exists to hand the model an exact value to filter on, so escaping
+# a pipe there returns something that matches nothing.
+_LINE = str.maketrans({"\n": "\\n", "\r": "\\r"})
+_CELL = str.maketrans({"\n": "\\n", "\r": "\\r", "\t": "\\t", "|": "\\|"})
 
 
-def _as_data(value: object) -> object:
-    return value.translate(_STRUCTURAL) if isinstance(value, str) else value
+def _as_line(value: object) -> str:
+    """For a newline-separated list: only a line break is structure."""
+    return str(value).translate(_LINE)
+
+
+def _as_cell(value: object) -> str:
+    """For a markdown table cell: line breaks, tabs and pipes are structure.
+
+    str() first, deliberately. A LIST, STRUCT or MAP column arrives from DuckDB
+    as an ndarray or dict, so an isinstance(str) test skipped it and the hostile
+    string nested inside went through unescaped.
+    """
+    return str(value).translate(_CELL)
+
+
+def _render(frame) -> str:
+    """A markdown table whose values cannot be mistaken for its structure."""
+    frame = frame.copy()
+    frame.columns = [_as_cell(c) for c in frame.columns]
+    for column in frame.columns:
+        # Escape anything that is not a number or a timestamp, rather than
+        # naming the dtypes that hold text: what counts as a string dtype has
+        # changed across pandas versions, and a guard that quietly stops
+        # matching is worse than no guard.
+        values = frame[column]
+        if not (is_numeric_dtype(values) or is_datetime64_any_dtype(values)):
+            frame[column] = values.map(_as_cell)
+    return frame.to_markdown(index=False)
 
 
 def _fits(rendered: str) -> str:
@@ -152,16 +180,18 @@ def build_toolbox(db: Database, inventory: dict[str, dict[str, Any]],
             # One extra row is enough to know there was more.
             frame = db.sql(sql).limit(max_rows + 1).df()
         except Exception as exc:
-            return f"Error: {exc}"
+            # DuckDB quotes the offending value back verbatim, so this path can
+            # carry a hostile job name too -- and it returned before both the
+            # escaping and the size cap.
+            return _fits(_as_line(f"Error: {exc}"))
         if frame.empty:
             return ("0 rows. The query is valid but nothing matched it. Check your "
                     "filter values with list_values before concluding the answer is zero.")
-        frame = frame.map(_as_data)
         if len(frame) > max_rows:
-            return _fits(frame.head(max_rows).to_markdown(index=False) +
+            return _fits(_render(frame.head(max_rows)) +
                          f"\n\n[truncated at {max_rows} rows. Aggregate, or add ORDER BY "
                          "and LIMIT]")
-        return _fits(frame.to_markdown(index=False))
+        return _fits(_render(frame))
 
     @tool
     def list_values(column: LookupColumn, contains: str = "") -> str:
@@ -183,6 +213,6 @@ def build_toolbox(db: Database, inventory: dict[str, dict[str, Any]],
             return ToolFailure(
                 f"No {column} value contains '{contains}'. Try a shorter fragment.")
         suffix = "\n[first 100 only]" if len(frame) == 100 else ""
-        return _fits("\n".join(frame["value"].astype(str).map(_as_data)) + suffix)
+        return _fits("\n".join(frame["value"].map(_as_line)) + suffix)
 
     return Toolbox.of(partition_info, run_sql, list_values)

@@ -54,12 +54,15 @@ def _draft_each(agent_for, codes: list[str], out: Path, prompt: str) -> DraftSum
     """
     summary = DraftSummary()
     for code in codes:
-        path = _draft_path(out, code)
         try:
+            # Inside the try: a code the export made unusable costs its own
+            # draft, not every draft after it.
+            path = _draft_path(out, code)
             agent, rows = agent_for(code)
             run = agent.ask(prompt.format(account=code))
         except Exception as exc:
             summary.failed.append(code)
+            path = out / f"{_ACCOUNT.match(code or '') and code or 'unusable-account'}.md"
             path.write_text(f"# Usage note: {code}\n\n"
                             f"<!-- FAILED, nothing to send: {type(exc).__name__}: {exc} -->\n",
                             encoding="utf-8")
@@ -70,8 +73,8 @@ def _draft_each(agent_for, codes: list[str], out: Path, prompt: str) -> DraftSum
         path.write_text(
             f"# Usage note: {code}\n\n"
             f"<!-- draft, unreviewed. {run.summary()} -->\n"
-            f"<!-- derived from {rows:,} job rows, all of account {code}. The agent "
-            f"could not see any other account's data. -->\n\n"
+            f"<!-- derived from {rows:,} job rows, all of account {code}. No other "
+            f"account's job rows were loaded. -->\n\n"
             f"{run.answer or '(no answer produced: ' + run.no_answer_reason + ')'}\n",
             encoding="utf-8")
         summary.written.append(path)
@@ -102,8 +105,7 @@ def _client():
     return OpenAI(base_url=settings.base_url, api_key=settings.require_api_key())
 
 
-def _agent_over(db: Database, client) -> Agent:
-    inventory = load_inventory(settings.context_dir / "partitions.json")
+def _agent_over(db: Database, client, inventory) -> Agent:
     return Agent(
         client=client,
         model=settings.model,
@@ -115,7 +117,8 @@ def _agent_over(db: Database, client) -> Agent:
 
 def _build() -> tuple[Agent, Database]:
     db = Database.open(settings.data_dir)
-    return _agent_over(db, _client()), db
+    inventory = load_inventory(settings.context_dir / "partitions.json")
+    return _agent_over(db, _client(), inventory), db
 
 
 @app.command()
@@ -154,14 +157,16 @@ def advisory(
     if limit:
         codes = codes[:limit]
 
+    inventory = load_inventory(settings.context_dir / "partitions.json")
+
     def agent_for(code: str):
         # One database per account, holding that account only. Asking the model
         # to write about account A does not stop it reading account B; not
         # loading B does. This matters because the prompt tells the model to go
         # looking at job names, and job names are chosen by cluster users.
-        scoped = db.scoped(code)
+        scoped = Database.open(settings.data_dir, account=code)
         rows = scoped.sql("SELECT COUNT(*) FROM jobs").fetchone()[0]
-        return _agent_over(scoped, client), rows
+        return _agent_over(scoped, client, inventory), rows
 
     out.mkdir(parents=True, exist_ok=True)
     summary = _draft_each(agent_for, codes, out, ADVISORY)
