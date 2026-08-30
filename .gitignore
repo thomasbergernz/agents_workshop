@@ -1,0 +1,8 @@
+# The notebook writes its dataset here, relative to wherever it is run, and the
+# whole point is that it is generated in about five seconds rather than cloned.
+data/
+
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
