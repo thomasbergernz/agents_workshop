@@ -66,7 +66,11 @@ def from_notebook(path: Path) -> tuple[list[tuple[str, str]], list[str]]:
     for cell in notebook["cells"]:
         if cell["cell_type"] != "code":
             continue
-        for line in "".join(cell["source"]).splitlines():
+        # Join shell line-continuations first. Without this a wrapped pip line
+        # is read only as far as the backslash, and every package after it is
+        # silently absent from the scan rather than reported as unscanned.
+        source = re.sub(r"\\\s*\n\s*", " ", "".join(cell["source"]))
+        for line in source.splitlines():
             if "pip install" not in line:
                 continue
             for token in line.split():
