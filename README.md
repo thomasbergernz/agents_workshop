@@ -120,10 +120,12 @@ what it is deliberately not for.
 
 ## Next Steps
 
-Once you've completed the workshop, consider:
-- Extending your agent with additional tools
-- Integrating with different data sources
-- Deploying your agent in a production environment
+- Point it at your own cluster: export from `sacct`, convert with
+  `sacct_to_parquet.py`, and put the two Parquet files beside the notebook.
+- Rewrite `kowhai-agent/context/` for your site. The schema cards and domain notes are
+  the asset there; the Python around them is replaceable.
+- Score a task of your own against the Part 12 rubric before automating it. Most
+  reporting work should be a saved query or a threshold alert, not an agent.
 
 ---
 
