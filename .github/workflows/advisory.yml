@@ -1,11 +1,19 @@
 # The one task that passed the rubric: repetitive, low-stakes per item, prose output.
 # It drafts. A person reads and sends.
+#
+# Manual for now. The schedule stays commented out until "Export last month from Slurm"
+# below is real: on demo data a monthly run spends API credit drafting notes about a
+# synthetic cluster and mails nobody. Uncomment the cron once that step is wired up.
 name: monthly usage notes
 
 on:
-  schedule:
-    - cron: "0 19 1 * *"        # 07:00 NZST on the 1st
+  # schedule:
+  #   - cron: "0 19 1 * *"        # 07:00 NZST on the 1st
   workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: kowhai-agent
 
 jobs:
   advisory:
@@ -27,6 +35,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: usage-note-drafts
+          # Relative to the workspace: defaults.run.working-directory applies to `run`
+          # steps only, not to `uses` steps.
           path: |
-            drafts/
-            logs/runs.jsonl
+            kowhai-agent/drafts/
+            kowhai-agent/logs/runs.jsonl
