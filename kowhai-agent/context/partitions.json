@@ -1,0 +1,49 @@
+{
+  "debug": {
+    "nodes": 4,
+    "cpus_per_node": 128,
+    "mem_gb_per_node": 480,
+    "gpus_per_node": 0,
+    "cpu": "AMD EPYC 7713",
+    "max_walltime_min": 15,
+    "charge_per_core_hour": 0.0
+  },
+  "large": {
+    "nodes": 240,
+    "cpus_per_node": 128,
+    "mem_gb_per_node": 480,
+    "gpus_per_node": 0,
+    "cpu": "AMD EPYC 7713",
+    "max_walltime_min": 4320,
+    "charge_per_core_hour": 0.02
+  },
+  "long": {
+    "nodes": 40,
+    "cpus_per_node": 128,
+    "mem_gb_per_node": 480,
+    "gpus_per_node": 0,
+    "cpu": "AMD EPYC 7713",
+    "max_walltime_min": 20160,
+    "charge_per_core_hour": 0.02
+  },
+  "hugemem": {
+    "nodes": 6,
+    "cpus_per_node": 128,
+    "mem_gb_per_node": 4030,
+    "gpus_per_node": 0,
+    "cpu": "AMD EPYC 7713",
+    "max_walltime_min": 10080,
+    "charge_per_core_hour": 0.06
+  },
+  "gpu": {
+    "nodes": 24,
+    "cpus_per_node": 64,
+    "mem_gb_per_node": 480,
+    "gpus_per_node": 4,
+    "cpu": "AMD EPYC 7543",
+    "max_walltime_min": 1440,
+    "charge_per_core_hour": 0.02,
+    "gpu": "NVIDIA A100 40GB",
+    "charge_per_gpu_hour": 1.2
+  }
+}
