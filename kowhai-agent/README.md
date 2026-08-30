@@ -42,7 +42,7 @@ item, prose output — and the human stays between the draft and the researcher.
       tools.py     partition_info, run_sql, list_values, as closures over one database
       agent.py     the loop (~40 lines), plus the cost and trace accounting
       context.py   loads the system prompt from markdown files
-      data.py      DuckDB over Parquet, read-only
+      data.py      DuckDB over Parquet, materialised, then no filesystem at all
       cli.py       ask / advisory / selfcheck / context
     context/
       00-role.md 10-jobs.md 20-sched-15m.md 30-domain-notes.md partitions.json
@@ -66,6 +66,38 @@ line to `logs/runs.jsonl`. The loop resends the whole history each iteration, so
 context is paid for once per tool call, not once per question — that is visible
 here rather than a surprise on the invoice.
 
+## Guardrails
+
+`run_sql` hands the model a general SQL tool, so the tool function is the control
+point:
+
+- **One statement, and it must be a SELECT.** DuckDB's own parser counts the
+  statements and names each type, so `SELECT 1; DROP VIEW jobs` is rejected outright
+  rather than half-executed. A prefix check on the string passes it.
+- **Every query filters on a timestamp column.** Checked against the query with
+  comments and string literals blanked out, so the predicate cannot hide in a `--`
+  comment. This enforces a habit, not a scan limit: `submit_ts > TIMESTAMP
+  '1970-01-01'` satisfies it and still reads everything.
+- **Results are capped** at `KOWHAI_MAX_ROWS` (50), so one query cannot flood the
+  context window. It caps what the model sees, not what DuckDB materialises.
+- **The connection has no filesystem.** `read_text`, `read_csv`, `glob` and
+  `COPY ... TO` are all legal inside a single SELECT, so no statement-level check
+  closes them. `Database.open` reads the Parquet into tables, then disables
+  `LocalFileSystem` and locks the configuration so a query cannot turn it back on.
+  The cost: the whole export is held in memory, and DuckDB can no longer spill a
+  large aggregation to disk.
+
+Each rejection is a sentence written for the model to read and correct, not an
+exception. Watch one happen with `kowhai ask --trace`.
+
+**None of this is database-level isolation.** It is one process guarding itself,
+which is the right shape for a workshop dataset in a `:memory:` database and the
+wrong shape for a real `slurmdbd`. There, put the query behind a read-only role on a
+separate replica with a statement timeout, and treat everything above as defence in
+depth. That matters most for `advisory`: it runs unattended, and the `job_name` and
+`project_name` strings it reads into the model's context are chosen by whoever ran
+`sbatch`.
+
 ## What this is not for
 
 From the workshop's Part 12 rubric, most reporting work should not be an agent:
@@ -80,10 +112,14 @@ From the workshop's Part 12 rubric, most reporting work should not be an agent:
 ## Tests
 
 ```bash
-uv run pytest        # 22 tests, no network, no API key
+uv run pytest        # 30 tests, no network, no API key
 ```
 
-The suite covers spec generation, every guardrail, tool-error recovery inside the
-loop, iteration limits, and that the context files still contain the facts the
-answers depend on — the UTC/NZST note, `planned_min`, and the warning against
-averaging a ratio.
+The suite covers spec generation, tool-error recovery inside the loop, iteration
+limits, and that the context files still contain the facts the answers depend on —
+the UTC/NZST note, `planned_min`, and the warning against averaging a ratio.
+
+It also covers each guardrail twice: with the input it obviously rejects, and with
+the input that used to slip past it. A guard tested only against what it visibly
+catches proves nothing, which is how the semicolon and the `--` comment survived a
+green suite.
