@@ -21,12 +21,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1        # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d      # v10.0.1
-      - name: The README quotes the notebook's real install line
-        working-directory: .
-        run: python3 .github/scripts/check_docs.py
       - run: uv sync --locked --extra dev
       - run: uv run ruff check .
       - run: uv run pytest -q
+      # After the sync: this reads the real test count from pytest, so it needs
+      # an environment to read it from.
+      - name: The READMEs describe what is actually here
+        working-directory: .
+        run: python3 .github/scripts/check_docs.py
       - name: Every tool works without a model
         run: |
           uv run scripts/make_workshop_data.py

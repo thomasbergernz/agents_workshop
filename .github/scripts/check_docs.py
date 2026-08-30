@@ -44,12 +44,16 @@ def advertised_test_counts() -> list[tuple[Path, int]]:
 
 
 def collected_tests() -> int:
+    """Ask pytest, rather than counting `def test_` and getting parametrised
+    cases wrong. Needs a synced environment, so this runs after `uv sync`."""
     import subprocess
-    out = subprocess.run(["uv", "run", "pytest", "--collect-only", "-q"],
-                         cwd=ROOT / "kowhai-agent", capture_output=True, text=True).stdout
-    match = re.search(r"(\d+) tests? collected", out)
+    result = subprocess.run(["uv", "run", "--no-sync", "pytest", "--collect-only", "-q"],
+                            cwd=ROOT / "kowhai-agent", capture_output=True, text=True)
+    match = re.search(r"(\d+) tests? collected", result.stdout)
     if not match:
-        raise SystemExit(f"could not read a test count from pytest:\n{out[-500:]}")
+        raise SystemExit(
+            f"could not read a test count from pytest (exit {result.returncode}).\n"
+            f"--- stdout ---\n{result.stdout[-800:]}\n--- stderr ---\n{result.stderr[-800:]}")
     return int(match.group(1))
 
 
