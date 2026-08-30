@@ -16,11 +16,11 @@ MINUTES = DAYS * 24 * 60
 TZ = 12 * 60  # NZST minutes ahead of UTC
 
 PARTITIONS = {
-    "debug":   dict(nodes=4,   cpn=128, mem=480_000,   gpus=0, max_min=15),
-    "large":   dict(nodes=240, cpn=128, mem=480_000,   gpus=0, max_min=4320),
-    "long":    dict(nodes=40,  cpn=128, mem=480_000,   gpus=0, max_min=20160),
-    "hugemem": dict(nodes=6,   cpn=128, mem=4_030_000, gpus=0, max_min=10080),
-    "gpu":     dict(nodes=24,  cpn=64,  mem=480_000,   gpus=4, max_min=1440),
+    "debug":   {"nodes": 4,   "cpn": 128, "mem": 480_000,   "gpus": 0, "max_min": 15},
+    "large":   {"nodes": 240, "cpn": 128, "mem": 480_000,   "gpus": 0, "max_min": 4320},
+    "long":    {"nodes": 40,  "cpn": 128, "mem": 480_000,   "gpus": 0, "max_min": 20160},
+    "hugemem": {"nodes": 6,   "cpn": 128, "mem": 4_030_000, "gpus": 0, "max_min": 10080},
+    "gpu":     {"nodes": 24,  "cpn": 64,  "mem": 480_000,   "gpus": 4, "max_min": 1440},
 }
 
 PROJECTS = [
@@ -159,20 +159,20 @@ def make_block(rng, n, partition, name_pool, spread, req_nodes, cpus_per_node_us
     start = eligible + np.round(planned).astype("timedelta64[m]")
     end = start + elapsed.astype("timedelta64[m]")
 
-    df = pd.DataFrame(dict(
-        job_name=rng.choice(name_pool, n),
-        partition=partition, qos=qos,
-        submit_ts=submit, eligible_ts=eligible, start_ts=start, end_ts=end,
-        state=state, req_nodes=req_nodes, req_cpus=req_cpus,
-        req_mem_mb=req_mem.astype(np.int64), req_gpus=req_nodes * gpus,
-        timelimit_min=tl.astype(np.int64), elapsed_min=elapsed.astype(np.int64),
-        planned_min=np.round(planned, 1), total_cpu_min=total_cpu,
-        max_rss_mb=rss.astype(np.int64),
-        gpu_util_pct=(np.round(gpu_util, 1) if gpu_util is not None else np.nan),
-        _cancelled_pending=cancelled_pending,
-        _proj=proj_idx if proj_idx is not None else rng.integers(0, len(PROJECTS), n),
-        _user=user_idx if user_idx is not None else rng.integers(0, 340, n),
-    ))
+    df = pd.DataFrame({
+        "job_name": rng.choice(name_pool, n),
+        "partition": partition, "qos": qos,
+        "submit_ts": submit, "eligible_ts": eligible, "start_ts": start, "end_ts": end,
+        "state": state, "req_nodes": req_nodes, "req_cpus": req_cpus,
+        "req_mem_mb": req_mem.astype(np.int64), "req_gpus": req_nodes * gpus,
+        "timelimit_min": tl.astype(np.int64), "elapsed_min": elapsed.astype(np.int64),
+        "planned_min": np.round(planned, 1), "total_cpu_min": total_cpu,
+        "max_rss_mb": rss.astype(np.int64),
+        "gpu_util_pct": (np.round(gpu_util, 1) if gpu_util is not None else np.nan),
+        "_cancelled_pending": cancelled_pending,
+        "_proj": proj_idx if proj_idx is not None else rng.integers(0, len(PROJECTS), n),
+        "_user": user_idx if user_idx is not None else rng.integers(0, 340, n),
+    })
     return df
 
 
@@ -295,19 +295,19 @@ def build(rng):
     inc_submit = (np.datetime64("2026-07-24T12:00")
                   + np.round(rng.exponential(95, n)).astype("timedelta64[m]"))
     elapsed = np.round(rng.normal(64, 11, n)).clip(18, 140)
-    inc = pd.DataFrame(dict(
-        job_name="kauri_bin_annotate",
-        partition="large", qos="normal",
-        submit_ts=inc_submit, eligible_ts=inc_submit,
-        state="COMPLETED", req_nodes=1, req_cpus=128, req_mem_mb=480000, req_gpus=0,
-        timelimit_min=1440, elapsed_min=elapsed.astype(np.int64),
-        total_cpu_min=np.round(elapsed * rng.uniform(0.95, 1.25, n), 1),
-        max_rss_mb=np.round(rng.uniform(9000, 26000, n)).astype(np.int64),
-        gpu_util_pct=np.nan,
-        _cancelled_pending=False,
-        _proj=1,          # uoa04412 Kauri Dieback Metagenomics
-        _user=7,
-    ))
+    inc = pd.DataFrame({
+        "job_name": "kauri_bin_annotate",
+        "partition": "large", "qos": "normal",
+        "submit_ts": inc_submit, "eligible_ts": inc_submit,
+        "state": "COMPLETED", "req_nodes": 1, "req_cpus": 128, "req_mem_mb": 480000, "req_gpus": 0,
+        "timelimit_min": 1440, "elapsed_min": elapsed.astype(np.int64),
+        "total_cpu_min": np.round(elapsed * rng.uniform(0.95, 1.25, n), 1),
+        "max_rss_mb": np.round(rng.uniform(9000, 26000, n)).astype(np.int64),
+        "gpu_util_pct": np.nan,
+        "_cancelled_pending": False,
+        "_proj": 1,          # uoa04412 Kauri Dieback Metagenomics
+        "_user": 7,
+    })
     # they trickle through the queue over ~2.5 days
     order = np.argsort(rng.random(n))
     slot = np.zeros(n)
@@ -321,16 +321,16 @@ def build(rng):
     n = 41
     sub = (np.datetime64("2026-07-06T00:00")
            + np.round(np.linspace(0, 26 * 1440, n) + rng.normal(0, 120, n)).astype("timedelta64[m]"))
-    tmo = pd.DataFrame(dict(
-        job_name="seismic_inv_full", partition="large", qos="normal",
-        submit_ts=sub, eligible_ts=sub, state="TIMEOUT",
-        req_nodes=2, req_cpus=256, req_mem_mb=960000, req_gpus=0,
-        timelimit_min=4320, elapsed_min=4320,
-        total_cpu_min=np.round(256 * 4320 * rng.uniform(0.80, 0.93, n), 1),
-        max_rss_mb=np.round(rng.uniform(180000, 320000, n)).astype(np.int64),
-        gpu_util_pct=np.nan, _cancelled_pending=False, _proj=3, _user=2,
-        planned_min=np.round(rng.lognormal(np.log(140), 0.8, n), 1),
-    ))
+    tmo = pd.DataFrame({
+        "job_name": "seismic_inv_full", "partition": "large", "qos": "normal",
+        "submit_ts": sub, "eligible_ts": sub, "state": "TIMEOUT",
+        "req_nodes": 2, "req_cpus": 256, "req_mem_mb": 960000, "req_gpus": 0,
+        "timelimit_min": 4320, "elapsed_min": 4320,
+        "total_cpu_min": np.round(256 * 4320 * rng.uniform(0.80, 0.93, n), 1),
+        "max_rss_mb": np.round(rng.uniform(180000, 320000, n)).astype(np.int64),
+        "gpu_util_pct": np.nan, "_cancelled_pending": False, "_proj": 3, "_user": 2,
+        "planned_min": np.round(rng.lognormal(np.log(140), 0.8, n), 1),
+    })
     tmo["start_ts"] = tmo["eligible_ts"] + pd.to_timedelta(tmo["planned_min"].round(), unit="m")
     tmo["end_ts"] = tmo["start_ts"] + pd.to_timedelta(tmo["elapsed_min"], unit="m")
     blocks.append(tmo)
@@ -415,8 +415,8 @@ def build(rng):
 def build_sched(jobs, rng):
     con = duckdb.connect()
     con.register("j", jobs)
-    parts = pd.DataFrame([dict(partition=k, nodes_total=v["nodes"],
-                               cpus_total=v["nodes"] * v["cpn"]) for k, v in PARTITIONS.items()])
+    parts = pd.DataFrame([{"partition": k, "nodes_total": v["nodes"],
+                               "cpus_total": v["nodes"] * v["cpn"]} for k, v in PARTITIONS.items()])
     con.register("p", parts)
     sql = """
     WITH b AS (

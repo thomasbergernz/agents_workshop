@@ -61,7 +61,11 @@ class FakeClient:
             tool_calls = [
                 types.SimpleNamespace(
                     id=f"call_{i}",
-                    function=types.SimpleNamespace(name=name, arguments=json.dumps(args)))
+                    # a str is passed through verbatim, so a test can script the
+                    # malformed arguments a truncated completion produces
+                    function=types.SimpleNamespace(
+                        name=name,
+                        arguments=args if isinstance(args, str) else json.dumps(args)))
                 for i, (name, args) in enumerate(calls)
             ]
         message = types.SimpleNamespace(content=content, tool_calls=tool_calls, role="assistant")

@@ -7,6 +7,8 @@ for a human to read and send. It does not send anything.
 from __future__ import annotations
 
 import json
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import typer
@@ -18,6 +20,57 @@ from .data import Database
 from .tools import build_toolbox, load_inventory
 
 app = typer.Typer(add_completion=False, help="Ask questions of Slurm accounting data.")
+
+# Account codes come out of the data, not from an operator typing them, so they
+# are whatever a converted sacct export happened to contain.
+_ACCOUNT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+@dataclass
+class DraftSummary:
+    written: list[Path] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
+    seconds: float = 0.0
+    tokens: int = 0
+
+
+def _draft_path(out: Path, code: str) -> Path:
+    """Where a draft for `code` may be written, or a refusal."""
+    if not _ACCOUNT.match(code or ""):
+        raise typer.BadParameter(
+            f"account code {code!r} is not a plain name; refusing to build a path from it")
+    return out / f"{code}.md"
+
+
+def _draft_each(agent, codes: list[str], out: Path, prompt: str) -> DraftSummary:
+    """One draft per account. A failure costs that account, not the batch.
+
+    Every account before the failure has already been paid for in model calls,
+    so losing them to an exception in the seventeenth is the expensive mistake.
+    """
+    summary = DraftSummary()
+    for code in codes:
+        path = _draft_path(out, code)
+        try:
+            run = agent.ask(prompt.format(account=code))
+        except Exception as exc:
+            summary.failed.append(code)
+            path.write_text(f"# Usage note: {code}\n\n"
+                            f"<!-- FAILED, nothing to send: {type(exc).__name__}: {exc} -->\n",
+                            encoding="utf-8")
+            typer.secho(f"! {path}  ({type(exc).__name__}: {exc})", fg="red")
+            continue
+        summary.seconds += run.seconds
+        summary.tokens += run.prompt_tokens_estimate
+        path.write_text(
+            f"# Usage note: {code}\n\n"
+            f"<!-- draft, unreviewed. {run.summary()} -->\n\n"
+            f"{run.answer or '(no answer produced: ' + run.no_answer_reason + ')'}\n",
+            encoding="utf-8")
+        summary.written.append(path)
+        flag = "!" if run.failed_calls or not run.answer else " "
+        typer.echo(f"{flag} {path}  ({run.seconds:.1f}s, {len(run.calls)} tool calls)")
+    return summary
 
 ADVISORY = """Write a short usage note for the research group behind project {account},
 covering the period in this dataset.
@@ -67,7 +120,7 @@ def ask(
                         fg="red" if call.failed else "cyan")
     run = agent.ask(question, on_call=on_call)
     typer.echo("")
-    typer.echo(run.answer or "No answer: the agent ran out of iterations.")
+    typer.echo(run.answer or f"No answer: {run.no_answer_reason}.")
     typer.secho(f"\n{run.summary()}", fg="bright_black")
 
 
@@ -89,23 +142,15 @@ def advisory(
         codes = codes[:limit]
 
     out.mkdir(parents=True, exist_ok=True)
-    total_seconds = total_tokens = 0
-    for code in codes:
-        run = agent.ask(ADVISORY.format(account=code))
-        total_seconds += run.seconds
-        total_tokens += run.prompt_tokens_estimate
-        path = out / f"{code}.md"
-        path.write_text(
-            f"# Usage note: {code}\n\n"
-            f"<!-- draft, unreviewed. {run.summary()} -->\n\n"
-            f"{run.answer or '(no answer produced)'}\n", encoding="utf-8")
-        flag = "!" if run.failed_calls or not run.answer else " "
-        typer.echo(f"{flag} {path}  ({run.seconds:.1f}s, {len(run.calls)} tool calls)")
+    summary = _draft_each(agent, codes, out, ADVISORY)
 
     typer.secho(
-        f"\n{len(codes)} drafts in {out}/ — read them before anyone sends one.\n"
-        f"{total_seconds:.0f}s, ~{total_tokens:,} prompt tokens total.",
+        f"\n{len(summary.written)} drafts in {out}/ — read them before anyone sends one.\n"
+        f"{summary.seconds:.0f}s, ~{summary.tokens:,} prompt tokens total.",
         fg="green")
+    if summary.failed:
+        typer.secho(f"{len(summary.failed)} failed: {', '.join(summary.failed)}", fg="red")
+        raise typer.Exit(code=1)
 
 
 @app.command()

@@ -29,10 +29,20 @@ class Run:
     prompt_tokens_estimate: int = 0
     seconds: float = 0.0
     stopped_early: bool = False
+    content_before_answer: str = ""
 
     @property
     def failed_calls(self) -> int:
         return sum(1 for c in self.calls if c.failed)
+
+    @property
+    def no_answer_reason(self) -> str:
+        """Why there is no answer -- the two causes need different responses."""
+        if self.answer is not None:
+            return ""
+        if self.stopped_early:
+            return f"the agent used all {self.model_calls} iterations without answering"
+        return "the model returned no content (a refusal, or a filtered completion)"
 
     def summary(self) -> str:
         return (f"{self.seconds:.1f}s, {self.model_calls} model calls, "
@@ -86,9 +96,29 @@ class Agent:
                 run.answer = message.content
                 break
 
+            # A reply can carry prose AND ask for tools. Dropping the prose loses
+            # reasoning the operator paid for and may never see again.
+            if message.content:
+                run.content_before_answer += message.content + "\n"
+
             messages.append(message)
             for request in message.tool_calls:
-                arguments = json.loads(request.function.arguments or "{}")
+                try:
+                    arguments = json.loads(request.function.arguments or "{}")
+                except json.JSONDecodeError as exc:
+                    # max_tokens can cut a completion mid-argument. Hand it back
+                    # the way every other tool failure is handled, so the model
+                    # can retry, rather than ending the process with a traceback.
+                    call = ToolCall(request.function.name, {},
+                                    f"Error: arguments were not valid JSON ({exc}). "
+                                    "Send the call again, complete and shorter.",
+                                    0.0, failed=True)
+                    run.calls.append(call)
+                    if on_call is not None:
+                        on_call(call, len(run.calls))
+                    messages.append({"role": "tool", "tool_call_id": request.id,
+                                     "content": call.result})
+                    continue
                 call = self.toolbox.call(request.function.name, arguments)
                 run.calls.append(call)
                 if on_call is not None:

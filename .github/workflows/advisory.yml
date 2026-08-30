@@ -11,6 +11,9 @@ on:
   #   - cron: "0 19 1 * *"        # 07:00 NZST on the 1st
   workflow_dispatch:
 
+permissions:
+  contents: read                 # the job holds an API key; give it nothing else
+
 defaults:
   run:
     working-directory: kowhai-agent
@@ -18,25 +21,38 @@ defaults:
 jobs:
   advisory:
     runs-on: ubuntu-latest
+    timeout-minutes: 30          # otherwise a stalled query runs to the 6h default
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1        # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d      # v10.0.1
       - name: Export last month from Slurm
         run: |
           # On a self-hosted runner with cluster access:
           # sacct -a -S "$(date -d 'last month' +%Y-%m-01)" ... > sacct_dump.txt
           # uv run scripts/sacct_to_parquet.py sacct_dump.txt --tz Pacific/Auckland \
           #   --out data/ --derive-sched --anonymise
+          #
+          # READ THIS BEFORE UNCOMMENTING THE ABOVE. This repository is public, so
+          # anything uploaded below is downloadable by anyone. Real drafts name real
+          # groups and their usage. --anonymise pseudonymises usernames ONLY: the
+          # account, project_name, job_name, job_id and exact timestamps are kept,
+          # which is enough to re-identify. Move the upload to a private channel, or
+          # do not enable the schedule.
           uv run scripts/make_workshop_data.py    # demo data, until the above is wired up
       - name: Draft the notes
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: uv run kowhai advisory --out drafts/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        # Without this, one failing account discards every draft already paid for.
+        if: always()
         with:
           name: usage-note-drafts
           # Relative to the workspace: defaults.run.working-directory applies to `run`
           # steps only, not to `uses` steps.
-          path: |
-            kowhai-agent/drafts/
-            kowhai-agent/logs/runs.jsonl
+          #
+          # logs/runs.jsonl is deliberately NOT uploaded. It records every query the
+          # model wrote, with account codes, usernames and job-name fragments as SQL
+          # literals -- the identifying detail, not the aggregate.
+          path: kowhai-agent/drafts/
+          retention-days: 7

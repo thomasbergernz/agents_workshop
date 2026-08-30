@@ -61,7 +61,7 @@ TARGET_COLUMNS = [
 
 _DUR = re.compile(r"^(?:(\d+)-)?(\d{1,2}):(\d{2}):(\d{2})(?:\.\d+)?$")
 _MIN = re.compile(r"^(?:(\d+)-)?(\d{1,2}):(\d{2})$")          # e.g. Timelimit 2-00:00
-_MEM = re.compile(r"^([\d.]+)([KMGT]?)([nc]?)$", re.I)
+_MEM = re.compile(r"^([\d.]+)([KMGT]?)([nc]?)$", re.IGNORECASE)
 
 
 def duration_minutes(text: str) -> float | None:
