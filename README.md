@@ -73,7 +73,41 @@ jupyter lab
 
 ## Structure
 
-This repository contains interactive notebook-based lessons that guide you through agent development step by step. Each section builds on previous concepts to create a complete, functional agent.
+```
+kowhai_slurm_agents_workshop.ipynb   the workshop itself, run top to bottom
+kowhai-agent/                        the same agent, as an installable package
+sacct_to_parquet.py                  turn a real sacct export into the Parquet files the notebook reads
+```
+
+The notebook teaches, and most of it should not be shipped: of its 56 code cells, 42
+are demonstrations and several are deliberately wrong. Extracting it mechanically
+would carry the wrong answers into production as if they were features.
+
+## The package
+
+`kowhai-agent/` is the other half — the same loop, the same three tools and the same
+guardrails, built for the one task in the workshop that passed its own rubric:
+drafting a usage note per research project, which a person then reads and sends.
+
+```bash
+cd kowhai-agent
+uv sync
+export OPENROUTER_API_KEY=...
+
+uv run scripts/make_workshop_data.py    # synthetic data, to try it out
+uv run kowhai selfcheck                 # every tool, no model calls, no cost
+uv run kowhai ask "Which project wasted the most core-hours?" --trace
+uv run kowhai advisory --out drafts/    # one usage note per project
+uv run pytest                           # 30 tests, no network, no API key
+```
+
+Three things differ from the notebook, and they are the point of the split: the system
+prompt lives in markdown files under `context/` that a colleague who knows the cluster
+but not Python can edit; tool specifications are generated from each function's
+signature rather than hand-written beside it; and every run is costed and logged.
+
+See [kowhai-agent/README.md](kowhai-agent/README.md) for how it is put together and
+what it is deliberately not for.
 
 ## Next Steps
 
