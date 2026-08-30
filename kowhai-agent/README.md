@@ -24,12 +24,23 @@ uv run scripts/sacct_to_parquet.py sacct_dump.txt \
 
 ## Use
 
+`uv sync` installs the `kowhai` command into `.venv` but does not put it on your
+PATH, so run it through uv:
+
 ```bash
-kowhai selfcheck                     # every tool, no model calls, no cost
-kowhai context                       # what the system prompt is made of
-kowhai ask "Which project wasted the most core-hours?" --trace
-kowhai advisory --out drafts/        # one usage note per project
+uv run kowhai selfcheck                     # every tool, no model calls, no cost
+uv run kowhai context                       # what the system prompt is made of
+uv run kowhai ask "Which project wasted the most core-hours?" --trace
+uv run kowhai advisory --out drafts/        # one usage note per project
 ```
+
+`selfcheck` and `context` make no model calls and need no API key. `ask` and
+`advisory` need `OPENROUTER_API_KEY`.
+
+Drop the `uv run` prefix if you activated the environment yourself — either
+`source .venv/bin/activate`, or the virtualenv you ran `pip install -e` into. To
+call it from outside this directory, use
+`uv run --directory /path/to/kowhai-agent kowhai selfcheck`.
 
 `advisory` writes markdown drafts and sends nothing. That is the point: it is the
 one task in the workshop that passed its own rubric — repetitive, low-stakes per
@@ -88,7 +99,7 @@ point:
   large aggregation to disk.
 
 Each rejection is a sentence written for the model to read and correct, not an
-exception. Watch one happen with `kowhai ask --trace`.
+exception. Watch one happen with `uv run kowhai ask ... --trace`.
 
 **None of this is database-level isolation.** It is one process guarding itself,
 which is the right shape for a workshop dataset in a `:memory:` database and the
