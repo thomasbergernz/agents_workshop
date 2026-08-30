@@ -1,0 +1,38 @@
+[project]
+name = "kowhai-agent"
+version = "0.1.0"
+description = "Ask questions of Slurm accounting data, and draft usage notes from it."
+requires-python = ">=3.11"
+dependencies = [
+    "duckdb>=1.5",
+    "openai>=1.60",
+    "pandas>=2.2",
+    "pyarrow>=16",
+    "tabulate>=0.9",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+kowhai = "kowhai_agent.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kowhai_agent"]
+
+[tool.ruff]
+line-length = 96
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+# Catching bare Exception is deliberate in two places: a tool error must become a
+# message the model can read and correct, never a traceback that kills the loop.
+# B008 fires on typer.Option in defaults, which is how typer is meant to be used.
+ignore = ["BLE001", "B008"]

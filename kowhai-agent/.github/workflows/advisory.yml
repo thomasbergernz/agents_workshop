@@ -1,0 +1,32 @@
+# The one task that passed the rubric: repetitive, low-stakes per item, prose output.
+# It drafts. A person reads and sends.
+name: monthly usage notes
+
+on:
+  schedule:
+    - cron: "0 19 1 * *"        # 07:00 NZST on the 1st
+  workflow_dispatch:
+
+jobs:
+  advisory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Export last month from Slurm
+        run: |
+          # On a self-hosted runner with cluster access:
+          # sacct -a -S "$(date -d 'last month' +%Y-%m-01)" ... > sacct_dump.txt
+          # uv run scripts/sacct_to_parquet.py sacct_dump.txt --tz Pacific/Auckland \
+          #   --out data/ --derive-sched --anonymise
+          uv run scripts/make_workshop_data.py    # demo data, until the above is wired up
+      - name: Draft the notes
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: uv run kowhai advisory --out drafts/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: usage-note-drafts
+          path: |
+            drafts/
+            logs/runs.jsonl
