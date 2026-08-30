@@ -1,0 +1,13 @@
+# The workflows pin their actions to commit SHAs, which is right for a job that
+# holds an API key -- but pinned means frozen, and this is what unfreezes them
+# safely. Python dependencies are covered by the dependency-advisories workflow,
+# which also reads the notebook's own pip line.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: tuesday
+    commit-message:
+      prefix: "ci"

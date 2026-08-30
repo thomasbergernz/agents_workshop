@@ -29,21 +29,27 @@ seconds into two Parquet files.
 Open `kowhai_slurm_agents_workshop.ipynb` and run the setup cell in Part 0:
 
 ```python
-!pip install -q duckdb==1.5.5 matplotlib openai==2.53.0 pandas pyarrow tabulate==0.10.0
+!pip install -q duckdb==1.5.5 matplotlib==3.11.1 numpy==2.5.2 openai==2.53.0 \
+    pandas==3.0.5 pyarrow==25.0.1 tabulate==0.10.0
 ```
 
 Pinned so the workshop behaves the same everywhere, and safe to re-run. It is the same
 cell on Colab as on a local kernel.
 
 Locally, create the environment first so those packages land in it rather than in your
-system Python:
+system Python. This uses [uv](https://docs.astral.sh/uv/getting-started/installation/),
+the same tool the package uses:
 
 ```bash
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
-pip install jupyter
+uv venv --seed                  # --seed installs pip, which the notebook's own cell needs
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+uv pip install jupyterlab notebook
 jupyter lab                     # or: jupyter notebook
 ```
+
+`--seed` is not optional here. A uv environment has no `pip` at all by default, and the
+notebook installs its own dependencies with `!pip install` — without it that cell either
+fails outright or silently installs into your system Python instead.
 
 ### Your API key
 
@@ -108,7 +114,7 @@ uv run scripts/make_workshop_data.py    # synthetic data, to try it out
 uv run kowhai selfcheck                 # every tool, no model calls, no cost
 uv run kowhai ask "Which project wasted the most core-hours?" --trace
 uv run kowhai advisory --out drafts/    # one usage note per project
-uv run pytest                           # 71 tests, no network, no API key
+uv run pytest                           # 82 tests, no network, no API key
 ```
 
 Three things differ from the notebook, and they are the point of the split: the system

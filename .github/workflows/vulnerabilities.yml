@@ -1,0 +1,79 @@
+# Dependency advisories, prioritized by how likely they are to be exploited
+# rather than by CVSS alone.
+#
+# Two stages: this workflow collects CVE ids from every dependency set the repo
+# asks people to install, and cve-prioritizer-action scores them against EPSS
+# and CISA KEV. The gate differs by trigger on purpose -- see `fail-on` below.
+name: dependency advisories
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 19 * * 1"      # 07:00 NZST Tuesday
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write           # only used by the scheduled run, below
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1        # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d      # v10.0.1
+
+      - name: Resolve the package's runtime dependencies
+        working-directory: kowhai-agent
+        # From the lockfile, so this is the exact set `uv sync` installs rather
+        # than the ranges in pyproject.toml.
+        run: uv export --format requirements-txt --no-hashes --no-dev
+             --no-emit-project > "$RUNNER_TEMP/package-requirements.txt"
+
+      - name: Collect CVE ids
+        id: collect
+        # The notebook is scanned as well as the package. Its Part 0 cell is a
+        # separate `pip install` line and it is the one attendees actually run,
+        # but nothing else looks at it.
+        run: |
+          python3 .github/scripts/dependency_cves.py \
+            --requirements "kowhai-agent (uv.lock)=$RUNNER_TEMP/package-requirements.txt" \
+            --notebook kowhai_slurm_agents_workshop.ipynb \
+            --out cves.txt
+
+      - name: Prioritize
+        id: prio
+        # Nothing to score when no dependency has an advisory, which is the
+        # normal case -- the action would have no input to work from.
+        if: steps.collect.outputs.cve-count != '0'
+        uses: Confluenceservice/cve-prioritizer-action@1a9734908585b6be94c6f3a4eb9b58f2ca07ea89  # v1.4.1
+        with:
+          cve-file: cves.txt
+          # A pull request is blocked only by Priority 1+, which means CISA KEV:
+          # known exploited in the wild. Everything below that is reported and
+          # left to a person, because this repository is forked by workshop
+          # attendees and a transitive advisory they cannot fix should not break
+          # their fork. The weekly run gates on nothing and reports everything.
+          fail-on: ${{ github.event_name == 'pull_request' && 'P1+' || 'none' }}
+
+      - name: Open an issue for anything exploited in the wild
+        # cve-count guards the skipped case: a skipped step's outputs are the
+        # empty string, and '' != '0' is true, which would file an empty issue.
+        if: >-
+          github.event_name == 'schedule'
+          && steps.collect.outputs.cve-count != '0'
+          && steps.prio.outputs.p1-plus-count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ steps.prio.outputs.p1-plus-count }}
+          RESULTS: ${{ steps.prio.outputs.results-file }}
+        run: |
+          gh issue create \
+            --title "CISA KEV-listed CVEs in dependencies ($COUNT)" \
+            --label security \
+            --body "$(printf '%s\n\n```\n%s\n```\n' \
+              "The weekly dependency scan found $COUNT CVE(s) listed in CISA KEV — known exploited in the wild. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              "$(cat "$RESULTS")")"
