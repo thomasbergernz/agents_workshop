@@ -11,11 +11,30 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def load_context(context_dir: Path) -> str:
-    """Concatenate every .md file in the context directory, in filename order."""
+def _describes_a_missing_table(text: str, tables: list[str] | None) -> bool:
+    """True when a card documents a table that was never loaded.
+
+    sched_15m.parquet is optional, but its card went to the model regardless,
+    so the model was told about a table it would then fail to query.
+    """
+    if tables is None:
+        return False
+    for line in text.splitlines():
+        if line.startswith("## Table:"):
+            return line.split(":", 1)[1].strip() not in tables
+    return False
+
+
+def load_context(context_dir: Path, tables: list[str] | None = None) -> str:
+    """Concatenate every .md file in the context directory, in filename order.
+
+    Pass `tables` to drop the schema card for any table that is not loaded.
+    """
     if not context_dir.is_dir():
         raise SystemExit(f"No context directory at {context_dir}")
-    parts = [p.read_text(encoding="utf-8").strip() for p in sorted(context_dir.glob("*.md"))]
+    parts = [text for text in
+             (p.read_text(encoding="utf-8").strip() for p in sorted(context_dir.glob("*.md")))
+             if not _describes_a_missing_table(text, tables)]
     if not parts:
         raise SystemExit(f"No .md context files in {context_dir}")
     return "\n\n".join(parts) + "\n"

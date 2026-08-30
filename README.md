@@ -15,7 +15,8 @@ This workshop provides a hands-on introduction to building autonomous agents. Yo
 
 ### Prerequisites
 
-- Python 3.10 or newer, in Jupyter, JupyterLab, or [Google Colab](https://colab.research.google.com)
+- Python 3.10 or newer for the notebook, 3.11+ for the package, in Jupyter,
+  JupyterLab, or [Google Colab](https://colab.research.google.com)
 - An [OpenRouter](https://openrouter.ai) API key. A complete run makes a few dozen
   model calls and costs a few cents.
 
@@ -107,7 +108,7 @@ uv run scripts/make_workshop_data.py    # synthetic data, to try it out
 uv run kowhai selfcheck                 # every tool, no model calls, no cost
 uv run kowhai ask "Which project wasted the most core-hours?" --trace
 uv run kowhai advisory --out drafts/    # one usage note per project
-uv run pytest                           # 30 tests, no network, no API key
+uv run pytest                           # 71 tests, no network, no API key
 ```
 
 Three things differ from the notebook, and they are the point of the split: the system

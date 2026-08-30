@@ -95,6 +95,13 @@ def tool(fn: Callable[..., str]) -> Callable[..., str]:
     return fn
 
 
+class ToolFailure(str):
+    """A tool result that is a failure. `failed` used to be a substring test on
+    English prose, which counted a job named `error_handler` as a failure and
+    missed "Unknown partition" entirely -- and that flag is the only per-account
+    triage signal an operator gets across eighteen drafts."""
+
+
 @dataclass
 class ToolCall:
     """One complete request/execute/result cycle, for logging and display."""
@@ -142,8 +149,10 @@ class Toolbox:
             return ToolCall(name, arguments, f"Error: no tool named '{name}'.",
                             time.perf_counter() - started, failed=True)
         try:
-            result = str(function(**arguments))
-            failed = result.lstrip().lower().startswith("error")
+            returned = function(**arguments)
+            result = str(returned)
+            failed = isinstance(returned, ToolFailure) or \
+                result.lstrip().lower().startswith("error:")
         except Exception as exc:  # returned to the model, which usually recovers
             result, failed = f"Error: {type(exc).__name__}: {exc}", True
         return ToolCall(name, arguments, result, time.perf_counter() - started, failed)

@@ -8,19 +8,21 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 import duckdb
 
 from .data import Database
-from .tooling import Toolbox, tool
+from .tooling import Toolbox, ToolFailure, tool
 
 TIME_COLUMNS = ("submit_ts", "eligible_ts", "start_ts", "end_ts", "ts")
-LOOKUP_COLUMNS = ("account", "project_name", "institution", "partition", "state",
-                  "job_name", "user", "last_reason")
 
+# One definition. The runtime guard and the enum the model is shown were written
+# out separately, so adding a column to one would either expose a column the
+# guard rejects or hide a column that is allowed -- silently, either way.
 LookupColumn = Literal["account", "project_name", "institution", "partition",
                        "state", "job_name", "user", "last_reason"]
+LOOKUP_COLUMNS = get_args(LookupColumn)
 
 _TIME_FILTER = re.compile(r"\b(" + "|".join(TIME_COLUMNS) + r")\s*(>=|>|<=|<|between)", re.IGNORECASE)
 
@@ -101,8 +103,8 @@ def build_toolbox(db: Database, inventory: dict[str, dict[str, Any]],
         """
         details = inventory.get(partition)
         if details is None:
-            return (f"Unknown partition '{partition}'. "
-                    f"Known partitions: {', '.join(inventory)}.")
+            return ToolFailure(f"Unknown partition '{partition}'. "
+                               f"Known partitions: {', '.join(inventory)}.")
         lines = [f"partition: {partition}"]
         lines += [f"{k}: {v}" for k, v in details.items()]
         cores = details["nodes"] * details["cpus_per_node"]
@@ -164,7 +166,8 @@ def build_toolbox(db: Database, inventory: dict[str, dict[str, Any]],
             [f"%{_escape_like(contains)}%"]
         ).df()
         if frame.empty:
-            return f"No {column} value contains '{contains}'. Try a shorter fragment."
+            return ToolFailure(
+                f"No {column} value contains '{contains}'. Try a shorter fragment.")
         suffix = "\n[first 100 only]" if len(frame) == 100 else ""
         return _fits("\n".join(frame["value"].astype(str)) + suffix)
 

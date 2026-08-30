@@ -3,7 +3,7 @@ from .agent import Agent, Run
 from .config import Settings, settings
 from .context import load_context
 from .data import Database
-from .tooling import Toolbox, ToolCall, format_call, tool
+from .tooling import Toolbox, ToolCall, ToolFailure, format_call, tool
 from .tools import build_toolbox, load_inventory
 
 __all__ = [
@@ -12,6 +12,7 @@ __all__ = [
            "Run",
            "Settings",
            "ToolCall",
+           "ToolFailure",
            "Toolbox",
            "build_toolbox",
            "format_call",

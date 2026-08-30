@@ -2,7 +2,9 @@
 
 
 def test_read_only(toolbox):
-    assert toolbox.call("run_sql", {"sql": "DROP VIEW jobs"}).result.startswith(
+    """DROP TABLE, not DROP VIEW: since the Parquet is materialised, DROP VIEW
+    is a harmless catalog error, so rejecting it proved nothing."""
+    assert toolbox.call("run_sql", {"sql": "DROP TABLE jobs"}).result.startswith(
         "Error: only SELECT")
 
 

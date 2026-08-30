@@ -75,3 +75,29 @@ def test_toolbox_replacement_keeps_the_others(toolbox):
     swapped = toolbox.with_(run_sql)
     assert swapped.call("run_sql", {"sql": "x"}).result == "replaced"
     assert set(swapped) == set(toolbox)
+
+
+def test_a_result_that_merely_starts_with_error_is_not_a_failed_call(toolbox):
+    """`failed` was a substring test on English prose. It is the operator's only
+    per-account triage signal, and job names beginning with 'error' are legal."""
+    @tool
+    def echo(x: str) -> str:
+        """Echo a value.
+
+        x: Anything.
+        """
+        return "error_handler.log"
+
+    assert not toolbox.with_(echo).call("echo", {"x": "q"}).failed
+
+
+def test_a_tool_that_reports_it_could_not_answer_is_a_failed_call(toolbox):
+    assert toolbox.call("partition_info", {"partition": "nope"}).failed
+    assert toolbox.call("list_values", {"column": "account", "contains": "zzzz"}).failed
+
+
+def test_the_lookup_allow_list_cannot_drift_from_the_advertised_enum(toolbox):
+    from typing import get_args
+
+    from kowhai_agent.tools import LOOKUP_COLUMNS, LookupColumn
+    assert set(get_args(LookupColumn)) == set(LOOKUP_COLUMNS)

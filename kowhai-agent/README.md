@@ -89,8 +89,14 @@ point:
   comments and string literals blanked out, so the predicate cannot hide in a `--`
   comment. This enforces a habit, not a scan limit: `submit_ts > TIMESTAMP
   '1970-01-01'` satisfies it and still reads everything.
-- **Results are capped** at `KOWHAI_MAX_ROWS` (50), so one query cannot flood the
-  context window. It caps what the model sees, not what DuckDB materialises.
+- **Results are capped** at `KOWHAI_MAX_ROWS` (50) rows *and* 20,000 characters.
+  The row cap is applied by the query, not after the fact in pandas, so a cross
+  join is never built in full to show fifty rows of it. The character cap is there
+  because rows are the wrong unit: one `string_agg` row can flood the context
+  window without ever approaching fifty.
+- **The connection has a memory limit it cannot raise.** 2GB and four threads, set
+  before the configuration is locked, so an expensive query is an error the model
+  can read rather than an OOM kill of an unattended run.
 - **The connection has no filesystem.** `read_text`, `read_csv`, `glob` and
   `COPY ... TO` are all legal inside a single SELECT, so no statement-level check
   closes them. `Database.open` reads the Parquet into tables, then disables
@@ -123,7 +129,7 @@ From the workshop's Part 12 rubric, most reporting work should not be an agent:
 ## Tests
 
 ```bash
-uv run pytest        # 30 tests, no network, no API key
+uv run pytest        # 71 tests, no network, no API key
 ```
 
 The suite covers spec generation, tool-error recovery inside the loop, iteration
@@ -132,5 +138,8 @@ the UTC/NZST note, `planned_min`, and the warning against averaging a ratio.
 
 It also covers each guardrail twice: with the input it obviously rejects, and with
 the input that used to slip past it. A guard tested only against what it visibly
-catches proves nothing, which is how the semicolon and the `--` comment survived a
-green suite.
+catches proves nothing — that is how the semicolon, the `--` comment, dollar-quoted
+strings and a double-quoted column alias each survived a green suite in turn.
+
+`scripts/sacct_to_parquet.py` has its own suite, because the path to real cluster
+data is the one nobody exercises until the day they need it.

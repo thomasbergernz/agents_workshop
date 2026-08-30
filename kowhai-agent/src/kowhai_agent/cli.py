@@ -89,7 +89,7 @@ what the change would save. Be direct and not preachy; these are colleagues, not
 offenders."""
 
 
-def _build(verbose: bool = False) -> tuple[Agent, Database]:
+def _build() -> tuple[Agent, Database]:
     from openai import OpenAI
 
     db = Database.open(settings.data_dir)
@@ -99,7 +99,7 @@ def _build(verbose: bool = False) -> tuple[Agent, Database]:
     agent = Agent(
         client=client,
         model=settings.model,
-        system_prompt=load_context(settings.context_dir),
+        system_prompt=load_context(settings.context_dir, tables=db.tables),
         toolbox=toolbox,
         log_path=settings.log_path,
     )
@@ -163,10 +163,11 @@ def selfcheck() -> None:
 
     checks = [
         ("tables present", lambda: ", ".join(db.tables)),
-        ("partition_info", lambda: toolbox.call("partition_info", {"partition": "large"}).result),
+        ("partition_info", lambda: toolbox.call(
+            "partition_info", {"partition": next(iter(inventory))}).result),
         ("partition_info rejects unknown",
-         lambda: "ok" if toolbox.call("partition_info", {"partition": "nope"})
-                 .result.startswith("Unknown") else "Error"),
+         lambda: "ok" if toolbox.call("partition_info", {"partition": "nope"}).failed
+                 else "Error: an unknown partition was not reported as a failure"),
         ("run_sql accepts a time filter",
          lambda: toolbox.call("run_sql", {"sql": f"SELECT COUNT(*) AS n FROM jobs "
                                                  f"WHERE submit_ts >= TIMESTAMP '{window}'"}).result),
@@ -174,11 +175,11 @@ def selfcheck() -> None:
          lambda: "ok" if toolbox.call("run_sql", {"sql": "SELECT COUNT(*) FROM jobs"})
                  .result.startswith("Error: every query") else "Error"),
         ("run_sql rejects writes",
-         lambda: "ok" if toolbox.call("run_sql", {"sql": "DROP VIEW jobs"})
+         lambda: "ok" if toolbox.call("run_sql", {"sql": "DROP TABLE jobs"})
                  .result.startswith("Error: only SELECT") else "Error"),
         ("list_values", lambda: toolbox.call("list_values", {"column": "partition"}).result),
         ("context loads",
-         lambda: f"{len(load_context(settings.context_dir).split())} words"),
+         lambda: f"{len(load_context(settings.context_dir, tables=db.tables).split())} words"),
         ("specs generated", lambda: json.dumps([s["function"]["name"] for s in toolbox.specs])),
     ]
     width = max(len(name) for name, _ in checks)
