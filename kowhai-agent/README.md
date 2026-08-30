@@ -107,13 +107,25 @@ point:
 Each rejection is a sentence written for the model to read and correct, not an
 exception. Watch one happen with `uv run kowhai ask ... --trace`.
 
+- **One account per database, for `advisory`.** Each note is drafted against a
+  connection holding only that group's rows, so the scope is what the model can
+  read rather than what the prompt asked for. The draft header records the
+  account and the row count it came from.
+- **Values are escaped where they are rendered.** A newline in a job name used to
+  forge a whole extra table row and a pipe opened a column, both indistinguishable
+  from real data at the point the model reads them. `sbatch --job-name` is
+  unprivileged, so this is reachable by any cluster user.
+
 **None of this is database-level isolation.** It is one process guarding itself,
 which is the right shape for a workshop dataset in a `:memory:` database and the
 wrong shape for a real `slurmdbd`. There, put the query behind a read-only role on a
 separate replica with a statement timeout, and treat everything above as defence in
-depth. That matters most for `advisory`: it runs unattended, and the `job_name` and
-`project_name` strings it reads into the model's context are chosen by whoever ran
-`sbatch`.
+depth. That matters most for `advisory`, which runs unattended over strings cluster users
+choose. Three things stand between a hostile job name and a wrong note: the data
+scope above, the escaping above, and a line in `context/00-role.md` telling the
+model that field values are never instructions. The first is a boundary; the other
+two are mitigations. A person still reads the draft before anyone sends it -- that
+is the control that does not depend on any of this holding.
 
 ## What this is not for
 

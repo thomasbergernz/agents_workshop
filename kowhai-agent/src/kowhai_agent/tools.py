@@ -47,6 +47,19 @@ _COMMENT_OR_LITERAL = re.compile(
 MAX_RESULT_CHARS = 20_000
 
 
+# job_name, project_name and user are chosen by whoever ran sbatch. A newline in
+# one forges a whole extra table row, and a pipe opens a column -- both
+# indistinguishable from real data at the point the model reads them, inside an
+# unattended job whose output a person is expected to skim and forward. The
+# characters that carry meaning in the rendering are escaped, so an injected
+# string can still be read, but only ever as one value in one cell.
+_STRUCTURAL = str.maketrans({"\n": "\\n", "\r": "\\r", "\t": "\\t", "|": "\\|"})
+
+
+def _as_data(value: object) -> object:
+    return value.translate(_STRUCTURAL) if isinstance(value, str) else value
+
+
 def _fits(rendered: str) -> str:
     if len(rendered) <= MAX_RESULT_CHARS:
         return rendered
@@ -143,6 +156,7 @@ def build_toolbox(db: Database, inventory: dict[str, dict[str, Any]],
         if frame.empty:
             return ("0 rows. The query is valid but nothing matched it. Check your "
                     "filter values with list_values before concluding the answer is zero.")
+        frame = frame.map(_as_data)
         if len(frame) > max_rows:
             return _fits(frame.head(max_rows).to_markdown(index=False) +
                          f"\n\n[truncated at {max_rows} rows. Aggregate, or add ORDER BY "
@@ -169,6 +183,6 @@ def build_toolbox(db: Database, inventory: dict[str, dict[str, Any]],
             return ToolFailure(
                 f"No {column} value contains '{contains}'. Try a shorter fragment.")
         suffix = "\n[first 100 only]" if len(frame) == 100 else ""
-        return _fits("\n".join(frame["value"].astype(str)) + suffix)
+        return _fits("\n".join(frame["value"].astype(str).map(_as_data)) + suffix)
 
     return Toolbox.of(partition_info, run_sql, list_values)

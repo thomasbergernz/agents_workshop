@@ -42,16 +42,21 @@ def _draft_path(out: Path, code: str) -> Path:
     return out / f"{code}.md"
 
 
-def _draft_each(agent, codes: list[str], out: Path, prompt: str) -> DraftSummary:
+def _draft_each(agent_for, codes: list[str], out: Path, prompt: str) -> DraftSummary:
     """One draft per account. A failure costs that account, not the batch.
 
     Every account before the failure has already been paid for in model calls,
     so losing them to an exception in the seventeenth is the expensive mistake.
+
+    `agent_for` returns the agent for one account. It is a callable rather than a
+    single shared agent because each account gets its own database holding only
+    that account's rows -- the scope has to be in the data, not in the prompt.
     """
     summary = DraftSummary()
     for code in codes:
         path = _draft_path(out, code)
         try:
+            agent, rows = agent_for(code)
             run = agent.ask(prompt.format(account=code))
         except Exception as exc:
             summary.failed.append(code)
@@ -64,7 +69,9 @@ def _draft_each(agent, codes: list[str], out: Path, prompt: str) -> DraftSummary
         summary.tokens += run.prompt_tokens_estimate
         path.write_text(
             f"# Usage note: {code}\n\n"
-            f"<!-- draft, unreviewed. {run.summary()} -->\n\n"
+            f"<!-- draft, unreviewed. {run.summary()} -->\n"
+            f"<!-- derived from {rows:,} job rows, all of account {code}. The agent "
+            f"could not see any other account's data. -->\n\n"
             f"{run.answer or '(no answer produced: ' + run.no_answer_reason + ')'}\n",
             encoding="utf-8")
         summary.written.append(path)
@@ -89,21 +96,26 @@ what the change would save. Be direct and not preachy; these are colleagues, not
 offenders."""
 
 
-def _build() -> tuple[Agent, Database]:
+def _client():
     from openai import OpenAI
 
-    db = Database.open(settings.data_dir)
+    return OpenAI(base_url=settings.base_url, api_key=settings.require_api_key())
+
+
+def _agent_over(db: Database, client) -> Agent:
     inventory = load_inventory(settings.context_dir / "partitions.json")
-    toolbox = build_toolbox(db, inventory, settings.max_rows)
-    client = OpenAI(base_url=settings.base_url, api_key=settings.require_api_key())
-    agent = Agent(
+    return Agent(
         client=client,
         model=settings.model,
         system_prompt=load_context(settings.context_dir, tables=db.tables),
-        toolbox=toolbox,
+        toolbox=build_toolbox(db, inventory, settings.max_rows),
         log_path=settings.log_path,
     )
-    return agent, db
+
+
+def _build() -> tuple[Agent, Database]:
+    db = Database.open(settings.data_dir)
+    return _agent_over(db, _client()), db
 
 
 @app.command()
@@ -132,7 +144,8 @@ def advisory(
     limit: int = typer.Option(0, help="Stop after N accounts (0 means no limit)."),
 ) -> None:
     """Draft a usage note per project. Writes files; sends nothing."""
-    agent, db = _build()
+    db = Database.open(settings.data_dir)
+    client = _client()
     if accounts:
         codes = [a.strip() for a in accounts.split(",") if a.strip()]
     else:
@@ -141,8 +154,17 @@ def advisory(
     if limit:
         codes = codes[:limit]
 
+    def agent_for(code: str):
+        # One database per account, holding that account only. Asking the model
+        # to write about account A does not stop it reading account B; not
+        # loading B does. This matters because the prompt tells the model to go
+        # looking at job names, and job names are chosen by cluster users.
+        scoped = db.scoped(code)
+        rows = scoped.sql("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        return _agent_over(scoped, client), rows
+
     out.mkdir(parents=True, exist_ok=True)
-    summary = _draft_each(agent, codes, out, ADVISORY)
+    summary = _draft_each(agent_for, codes, out, ADVISORY)
 
     typer.secho(
         f"\n{len(summary.written)} drafts in {out}/ — read them before anyone sends one.\n"

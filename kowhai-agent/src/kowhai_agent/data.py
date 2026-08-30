@@ -24,10 +24,20 @@ class Database:
     connection: duckdb.DuckDBPyConnection
     window_start: datetime
     window_end: datetime
+    data_dir: Path
+    account: str | None = None
 
     @classmethod
     def open(cls, data_dir: Path, memory_limit: str = MEMORY_LIMIT,
-             threads: int = THREADS) -> Database:
+             threads: int = THREADS, account: str | None = None) -> Database:
+        """Open the accounting data, optionally holding one account only.
+
+        `account` is the difference between asking the model to stay inside one
+        project and making it so. The advisory job drafts a note per group from
+        job names those groups' own users choose, so "write about account A" in
+        a prompt is a request, not a boundary -- the rows for account B are
+        still one query away. Filtering at load time means they are not there.
+        """
         jobs = data_dir / "jobs.parquet"
         sched = data_dir / "sched_15m.parquet"
         if not jobs.exists():
@@ -37,10 +47,18 @@ class Database:
             )
         con = duckdb.connect(":memory:")
         con.execute("SET enable_progress_bar = false")
-        con.execute(f"CREATE TABLE jobs AS SELECT * FROM '{jobs}'")
+        if account is None:
+            con.execute(f"CREATE TABLE jobs AS SELECT * FROM '{jobs}'")
+        else:
+            con.execute(f"CREATE TABLE jobs AS SELECT * FROM '{jobs}' WHERE account = ?",
+                        [account])
         if sched.exists():
             con.execute(f"CREATE TABLE sched_15m AS SELECT * FROM '{sched}'")
         lo, hi = con.sql("SELECT MIN(submit_ts), MAX(end_ts) FROM jobs").fetchone()
+        if lo is None or hi is None:
+            raise SystemExit(
+                f"No jobs in {jobs}" + (f" for account {account!r}." if account else ".")
+                + " Nothing to query.")
 
         # Order matters: lock_configuration freezes whatever is set at the time,
         # so every limit has to be in place before it. Without a memory_limit
@@ -57,7 +75,11 @@ class Database:
         con.execute("SET python_enable_replacements = false")
         con.execute("SET disabled_filesystems = 'LocalFileSystem'")
         con.execute("SET lock_configuration = true")
-        return cls(con, lo, hi)
+        return cls(con, lo, hi, data_dir, account)
+
+    def scoped(self, account: str) -> Database:
+        """The same data, holding one account only. See open()."""
+        return Database.open(self.data_dir, account=account)
 
     def sql(self, query: str):
         return self.connection.sql(query)

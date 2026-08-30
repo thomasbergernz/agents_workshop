@@ -169,3 +169,51 @@ def test_a_single_enormous_row_is_capped_by_bytes_not_just_rows(toolbox):
         "sql": "SELECT string_agg(repeat(job_name, 5000), ', ') AS everything "
                "FROM jobs WHERE submit_ts > TIMESTAMP '2000-01-01'"}).result
     assert len(result) < 50_000, f"returned {len(result):,} characters to the model"
+
+
+# --- job_name, project_name and user are chosen with `sbatch`. They are data,
+# --- and they must not be able to look like anything else.
+
+def test_a_newline_in_a_value_cannot_forge_a_table_row(toolbox):
+    """A forged row is indistinguishable from real data where the model reads it."""
+    result = toolbox.call("run_sql", {
+        "sql": "SELECT job_name FROM jobs WHERE submit_ts > TIMESTAMP '2000-01-01' "
+               "AND job_name LIKE '%IGNORE%'"}).result
+    body = [line for line in result.splitlines() if line.startswith("|")]
+    assert len(body) == 3          # header, separator, one data row -- not two
+    assert "\\n" in body[2]        # the newline survives, as text
+
+
+def test_a_pipe_in_a_value_cannot_forge_a_column(toolbox):
+    result = toolbox.call("run_sql", {
+        "sql": "SELECT job_name FROM jobs WHERE submit_ts > TIMESTAMP '2000-01-01' "
+               "AND job_name LIKE '%IGNORE%'"}).result
+    row = next(line for line in result.splitlines() if "IGNORE" in line)
+    structural = row.replace("\\|", "").count("|")     # an escaped pipe is not structure
+    assert structural == 2, f"the value opened its own column: {row}"
+
+
+def test_list_values_cannot_forge_extra_values(toolbox):
+    values = toolbox.call("list_values", {"column": "job_name"}).result.splitlines()
+    assert len(values) == 4
+    assert not any(v.strip().startswith("IGNORE") for v in values)
+
+
+def test_a_scoped_database_holds_only_one_account(db_factory):
+    scoped = db_factory(account="uoa03521")
+    accounts = {r[0] for r in scoped.sql(
+        "SELECT DISTINCT account FROM jobs").fetchall()}
+    assert accounts == {"uoa03521"}
+
+
+def test_a_scoped_toolbox_cannot_reach_another_account(db_factory, inventory):
+    from kowhai_agent import build_toolbox
+    scoped = build_toolbox(db_factory(account="uoa03521"), inventory, 50)
+    result = scoped.call("run_sql", {
+        "sql": "SELECT COUNT(*) AS n FROM jobs WHERE account = 'vuw03102' "
+               "AND submit_ts > TIMESTAMP '2000-01-01'"}).result
+    assert result.splitlines()[-1].strip("| ") == "0"
+    everything = scoped.call("run_sql", {
+        "sql": "SELECT DISTINCT account FROM jobs "
+               "WHERE submit_ts > TIMESTAMP '2000-01-01'"}).result
+    assert "vuw03102" not in everything

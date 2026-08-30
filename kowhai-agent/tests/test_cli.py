@@ -28,7 +28,9 @@ def test_one_failing_account_does_not_lose_the_drafts_already_written(tmp_path, 
                 raise RuntimeError("provider returned 500")
             return make_agent([("A note.", None)]).ask(question)
 
-    summary = _draft_each(Boom(), ["good1", "bad", "good2"], tmp_path, "{account}")
+    summary = _draft_each(lambda code: (Boom(), 7), ["good1", "bad", "good2"],
+                          tmp_path, "{account}")
     assert (tmp_path / "good1.md").exists() and (tmp_path / "good2.md").exists()
     assert summary.failed == ["bad"]
     assert "provider returned 500" in (tmp_path / "bad.md").read_text()
+    assert "all of account good1" in (tmp_path / "good1.md").read_text()
