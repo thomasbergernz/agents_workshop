@@ -42,6 +42,11 @@ Drop the `uv run` prefix if you activated the environment yourself — either
 call it from outside this directory, use
 `uv run --directory /path/to/kowhai-agent kowhai selfcheck`.
 
+To run it monthly on your own infrastructure rather than in CI, see
+[`deploy/RUNBOOK.md`](deploy/RUNBOOK.md) — a hosted CI runner cannot reach
+`slurmdbd`, and this repository is public, so its artifacts are not a private
+place to put real usage notes.
+
 `advisory` writes markdown drafts and sends nothing. That is the point: it is the
 one task in the workshop that passed its own rubric — repetitive, low-stakes per
 item, prose output — and the human stays between the draft and the researcher.
