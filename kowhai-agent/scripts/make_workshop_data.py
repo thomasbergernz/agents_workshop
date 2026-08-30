@@ -440,7 +440,12 @@ def build_sched(jobs, rng):
              SUM(j.req_cpus) AS cpus_pending_requested,
              MAX(date_diff('minute', j.eligible_ts, g.ts)) AS oldest_pending_min
       FROM grid g JOIN j ON j.partition = g.partition
-        AND j.eligible_ts <= g.ts AND j.start_ts > g.ts
+        AND j.eligible_ts <= g.ts
+        -- start_ts IS NULL means the job never started. NULL > ts is NULL, not
+        -- true, so every job that gave up waiting was absent from the backlog
+        -- for the whole time it was actually queued.
+        AND (j.start_ts > g.ts
+             OR (j.start_ts IS NULL AND (j.end_ts IS NULL OR j.end_ts > g.ts)))
       GROUP BY 1, 2
     )
     SELECT g.ts, g.partition, g.nodes_total, g.cpus_total,

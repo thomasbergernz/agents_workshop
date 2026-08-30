@@ -59,24 +59,41 @@ TARGET_COLUMNS = [
     "total_cpu_min", "max_rss_mb", "gpu_util_pct", "last_reason",
 ]
 
-_DUR = re.compile(r"^(?:(\d+)-)?(\d{1,2}):(\d{2}):(\d{2})(?:\.\d+)?$")
-_MIN = re.compile(r"^(?:(\d+)-)?(\d{1,2}):(\d{2})$")          # e.g. Timelimit 2-00:00
+_DUR = re.compile(r"^(?:(\d+)-)?(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d+))?$")
+_TWO = re.compile(r"^(?:(\d+)-)?(\d{1,2}):(\d{2})(?:\.(\d+))?$")
 _MEM = re.compile(r"^([\d.]+)([KMGT]?)([nc]?)$", re.IGNORECASE)
 
+# sacct's two-part duration is ambiguous and the columns disagree about it.
+# Timelimit, Elapsed and Planned are walltimes, written [DD-]HH:MM. TotalCPU is
+# consumed CPU time, written [DD-][HH:]MM:SS[.mmm]. Reading a TotalCPU of
+# "11:20.500" as eleven hours instead of eleven minutes inflates it 60x, and
+# CPU efficiency is the number every advisory note is built on -- so the caller
+# says which grammar it means rather than the parser guessing.
+HOURS_MINUTES, MINUTES_SECONDS = "hm", "ms"
 
-def duration_minutes(text: str) -> float | None:
-    """[DD-]HH:MM:SS(.fff) or [DD-]HH:MM or UNLIMITED/Partition_Limit -> minutes."""
+
+def duration_minutes(text: str, style: str = HOURS_MINUTES) -> float | None:
+    """A sacct duration in minutes.
+
+    style=HOURS_MINUTES: [DD-]HH:MM:SS[.fff] or [DD-]HH:MM   (walltime columns)
+    style=MINUTES_SECONDS: same three-part form, but a two-part
+    value reads as MM:SS[.mmm]                               (TotalCPU)
+    """
     t = (text or "").strip()
     if t in ("", "UNLIMITED", "Partition_Limit", "INVALID", "NOT_SET"):
         return None
     m = _DUR.match(t)
     if m:
-        d, h, mi, s = (int(x or 0) for x in m.groups())
-        return d * 1440 + h * 60 + mi + s / 60
-    m = _MIN.match(t)
+        d, h, mi, sec, frac = m.groups()
+        seconds = int(sec) + float(f"0.{frac}") if frac else int(sec)
+        return int(d or 0) * 1440 + int(h) * 60 + int(mi) + seconds / 60
+    m = _TWO.match(t)
     if m:
-        d, h, mi = (int(x or 0) for x in m.groups())
-        return d * 1440 + h * 60 + mi
+        d, first, second, frac = m.groups()
+        if style == MINUTES_SECONDS:
+            seconds = int(second) + float(f"0.{frac}") if frac else int(second)
+            return int(d or 0) * 1440 + int(first) + seconds / 60
+        return int(d or 0) * 1440 + int(first) * 60 + int(second)
     return None
 
 
@@ -90,12 +107,17 @@ def mem_mb(reqmem: str, nnodes: int, ncpus: int) -> float | None:
         # Bare digits are ambiguous across Slurm versions: bytes on some
         # (--noconvert), MB on others. Nobody requests under 10 MB, so:
         v = int(t)
-        return v / 1e6 if v >= 1e7 else float(v)
+        return v / 1048576 if v >= 1e7 else float(v)
     m = _MEM.match(t)
     if not m:
         return None
     value = float(m.group(1))
-    scale = {"": 1 / 1e6, "K": 1e3 / 1e6, "M": 1.0, "G": 1e3, "T": 1e6}[m.group(2).upper()]
+    # Slurm's K/M/G/T are KiB/MiB/GiB/TiB. Reading them as decimal made 4G into
+    # 4000 MB rather than 4096, and the ReqMem and MaxRSS errors ran in opposite
+    # directions -- compounding on the memory-efficiency ratio rather than
+    # cancelling.
+    scale = {"": 1 / 1048576, "K": 1 / 1024, "M": 1.0, "G": 1024.0, "T": 1048576.0}[
+        m.group(2).upper()]
     total = value * scale
     per = m.group(3).lower()
     if per == "n":
@@ -129,6 +151,12 @@ def parse_ids(jobid: str, jobidraw: str) -> tuple[int, int, int, bool]:
         return job_id, array_job_id, task, is_step
     if re.match(r"^\d+_\[", base):        # pending array container, e.g. 1234_[5-99]
         return int(base.split("_")[0]), int(base.split("_")[0]), -1, is_step
+    # Heterogeneous job components are written 1234+0. int() raised on the '+',
+    # and because the parse runs inside a pandas combine, one such row killed
+    # the whole conversion with a traceback naming neither row nor column.
+    base = base.split("+")[0]
+    if not base.isdigit():
+        return -1, -1, -1, is_step
     return int(base), -1, -1, is_step
 
 
@@ -136,9 +164,20 @@ def clean_state(state: str) -> str:
     return (state or "").split(" ")[0]     # 'CANCELLED by 12345' -> 'CANCELLED'
 
 
+SLURM_TIME_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+
 def to_utc(series: pd.Series, tz: str) -> pd.Series:
-    local = pd.to_datetime(series, errors="coerce")   # 'Unknown', 'None', '' -> NaT
-    return (local.dt.tz_localize(ZoneInfo(tz), ambiguous="NaT", nonexistent="NaT")
+    """Local sacct timestamps to naive UTC.
+
+    ambiguous/nonexistent were 'NaT', which silently deleted an hour of the year
+    at each daylight-saving transition -- per column and independently, so one
+    job could end up with a null start and a valid end. A transition now costs
+    at most an hour of accuracy instead of the whole value.
+    """
+    local = pd.to_datetime(series, format=SLURM_TIME_FORMAT, errors="coerce")
+    return (local.dt.tz_localize(ZoneInfo(tz), ambiguous=False,
+                                 nonexistent="shift_forward")
                  .dt.tz_convert("UTC").dt.tz_localize(None))
 
 
@@ -154,7 +193,17 @@ def convert(dump_path: str, tz: str, accounts_csv: str | None,
     if "Planned" not in raw.columns and "Reserved" in raw.columns:
         raw = raw.rename(columns={"Reserved": "Planned"})
 
-    ids = raw["JobID"].combine(raw.get("JobIDRaw", raw["JobID"]), parse_ids)
+    # `.get(col, "")` returns a bare string when the column is absent, and the
+    # string then reached .map()/.dt and raised. The guard above says only five
+    # columns are required, so the rest have to actually degrade.
+    for column in ("JobIDRaw", "JobName", "User", "Account", "Partition", "QOS",
+                   "ExitCode", "Eligible", "Start", "End", "Timelimit", "Elapsed",
+                   "Planned", "ReqMem", "ReqTRES", "TotalCPU", "MaxRSS", "Reason"):
+        if column not in raw.columns:
+            raw[column] = ""
+
+    ids = raw["JobID"].combine(raw["JobIDRaw"].where(raw["JobIDRaw"] != "", raw["JobID"]),
+                               parse_ids)
     raw[["job_id", "array_job_id", "array_task_id", "_is_step"]] = \
         pd.DataFrame(ids.tolist(), index=raw.index)
 
@@ -194,12 +243,17 @@ def convert(dump_path: str, tz: str, accounts_csv: str | None,
         "req_mem_mb": [mem_mb(m, n, c) for m, n, c
                        in zip(a.get("ReqMem", ""), nnodes, ncpus)],
         "req_gpus": a.get("ReqTRES", "").map(gpus_from_reqtres),
-        "total_cpu_min": a.get("TotalCPU", "").map(duration_minutes),
+        "total_cpu_min": a["TotalCPU"].map(
+            lambda v: duration_minutes(v, style=MINUTES_SECONDS)),
         "last_reason": a.get("Reason", "").replace({"None": None, "": None}),
     })
-    alloc_rss = a.get("MaxRSS", pd.Series("", index=a.index)).map(
-        lambda v: mem_mb(v, 1, 1) if str(v).strip() else None)
+    alloc_rss = a["MaxRSS"].map(lambda v: mem_mb(v, 1, 1) if str(v).strip() else None)
     alloc_rss.index = a["job_id"].values
+    # An array's task 0 carries the container's JobIDRaw, so both rows derive the
+    # same job_id and .map() refused the duplicated index -- aborting any export
+    # taken while an array was mid-flight, which is the common case.
+    alloc_rss = alloc_rss[~alloc_rss.index.duplicated()]
+    rss = rss[~rss.index.duplicated()]
     out["max_rss_mb"] = out["job_id"].map(rss).fillna(out["job_id"].map(alloc_rss))
     out["est_start_ts"] = pd.NaT          # not retained by Slurm; see docstring
     out["gpu_util_pct"] = np.nan          # profiling data, not accounting data
@@ -216,17 +270,59 @@ def convert(dump_path: str, tz: str, accounts_csv: str | None,
         out["institution"] = out["account"].map(m.get("institution", pd.Series(dtype=str))).fillna("")
 
     if anonymise:
-        salt = os.urandom(8).hex()
+        # Documented as "stable pseudonyms" in the docstring and in --help, but
+        # a fresh random salt per run relabelled everyone: u0001 in this month's
+        # file was a different person from u0001 in last month's. Keep the salt
+        # somewhere safe and pass it in; the default is stable but public, so it
+        # only shuffles the names, it does not hide them.
+        salt = os.environ.get("KOWHAI_ANON_SALT", "kowhai")
         order = {u: i + 1 for i, u in enumerate(sorted(
             out["user"].unique(),
             key=lambda u: hashlib.sha256((salt + u).encode()).hexdigest()))}
         out["user"] = out["user"].map(lambda u: f"u{order[u]:04d}")
 
+    # A job cancelled while pending reports Elapsed=00:00:00 and TotalCPU=00:00:00,
+    # which parsed to 0. The domain notes promise the agent these rows are NULL
+    # and "dropped by every average" -- with 0 they are not dropped: they drag
+    # the average down and make total_cpu_min / (req_cpus * elapsed_min) a
+    # division by zero. make_workshop_data.py already nulls them.
+    never_ran = out["start_ts"].isna()
+    out.loc[never_ran, ["elapsed_min", "total_cpu_min", "max_rss_mb"]] = None
+
     for c in ["elapsed_min", "timelimit_min", "max_rss_mb", "req_mem_mb"]:
-        out[c] = out[c].round().astype("Int64")
+        # .round() on an object-dtype column calls round() per element, and a
+        # column that is entirely None stays object -- so a blank MaxRSS, which
+        # every real export has on its allocation rows, aborted the whole run.
+        out[c] = out[c].astype(float).round().astype("Int64")
     out["planned_min"] = out["planned_min"].astype(float).round(1)
     out["total_cpu_min"] = out["total_cpu_min"].astype(float).round(1)
     return out[TARGET_COLUMNS].sort_values("submit_ts").reset_index(drop=True)
+
+
+def reconcile(raw_rows: int, out: pd.DataFrame) -> str:
+    """What the conversion lost, so a silent failure is not a silent success.
+
+    Everything above fails softly by design -- an unparseable duration or a
+    coerced timestamp becomes NULL rather than an error. That is only safe if
+    somebody is told how often it happened.
+    """
+    lines = [f"{raw_rows:,} rows in, {len(out):,} allocations out."]
+    for column in ("submit_ts", "start_ts", "elapsed_min", "total_cpu_min",
+                   "req_mem_mb", "max_rss_mb", "planned_min"):
+        missing = int(out[column].isna().sum())
+        if missing:
+            lines.append(f"  {column}: {missing:,} null ({missing / max(len(out), 1):.0%})")
+    started = out[out["start_ts"].notna()]
+    if len(started):
+        impossible = int((started["total_cpu_min"] >
+                          started["req_cpus"] * started["elapsed_min"] * 1.05).sum())
+        if impossible:
+            lines.append(f"  WARNING: {impossible:,} jobs report more CPU time than "
+                         "their allocation could supply — check the TotalCPU format")
+        out_of_order = int((started["start_ts"] < started["submit_ts"]).sum())
+        if out_of_order:
+            lines.append(f"  WARNING: {out_of_order:,} jobs start before they were submitted")
+    return "\n".join(lines)
 
 
 def derive_sched(jobs: pd.DataFrame, out_path: str) -> None:
@@ -249,7 +345,15 @@ def derive_sched(jobs: pd.DataFrame, out_path: str) -> None:
                         SUM(j.req_cpus) AS cpus_pending_requested,
                         MAX(date_diff('minute', j.eligible_ts, g.ts)) AS oldest_pending_min
                  FROM grid g JOIN j ON j.partition = g.partition
-                   AND j.eligible_ts <= g.ts AND j.start_ts > g.ts GROUP BY 1, 2)
+                   AND j.eligible_ts <= g.ts
+                   -- start_ts IS NULL means the job never started. The old
+                   -- predicate compared NULL > ts, which is NULL, not true, so
+                   -- every job that gave up waiting was missing from the
+                   -- backlog for the entire time it was actually queued.
+                   AND (j.start_ts > g.ts
+                        OR (j.start_ts IS NULL
+                            AND (j.end_ts IS NULL OR j.end_ts > g.ts)))
+                 GROUP BY 1, 2)
         SELECT g.ts, g.partition,
                COALESCE(r.jobs_running, 0) AS jobs_running,
                COALESCE(r.nodes_alloc, 0) AS nodes_alloc,
@@ -268,13 +372,20 @@ def derive_sched(jobs: pd.DataFrame, out_path: str) -> None:
         busy["partition"]).max().round()
     s["cpus_total"] = (s["nodes_total"] *
                        s["partition"].map(cores_per_node).fillna(128)).astype(int)
-    s["nodes_down_drain"] = 0
-    s["reservation_nodes"] = 0
-    s["nodes_idle"] = s["nodes_total"] - s["nodes_alloc"]
+    # Accounting data cannot see a drained node or a reservation. Writing 0
+    # told the agent "none were drained" with full confidence; NULL tells it the
+    # truth, which is that this table cannot answer that question.
+    s["nodes_down_drain"] = pd.NA
+    s["reservation_nodes"] = pd.NA
+    # Documented as nodes_total - nodes_alloc - nodes_down_drain. With an
+    # unknown drain count the remainder is unknown too, so it stays NULL rather
+    # than reporting every partition as 100% busy at its own observed peak.
+    s["nodes_idle"] = pd.NA
     s.to_parquet(out_path, index=False)
-    print(f"wrote {out_path}: {len(s):,} rows "
-          "(nodes_total inferred from observed peaks - replace with sinfo truth "
-          "if you have it)")
+    print(f"wrote {out_path}: {len(s):,} rows.\n"
+          "  nodes_total and cpus_total are inferred from observed peaks, not from\n"
+          "  sinfo, so they are a lower bound. nodes_down_drain, reservation_nodes\n"
+          "  and nodes_idle are NULL: accounting data cannot see them.")
 
 
 SQUEUE_START_SAMPLER = r"""
@@ -297,17 +408,24 @@ if __name__ == "__main__":
     ap.add_argument("--out", default="data")
     ap.add_argument("--accounts", help="CSV: account,project_name,institution")
     ap.add_argument("--anonymise", action="store_true",
-                    help="replace usernames with stable pseudonyms")
+                    help="pseudonymise usernames (NOT anonymisation: account, "
+                         "project_name, job_name, job_id and exact timestamps are "
+                         "kept, which is enough to re-identify). Set KOWHAI_ANON_SALT "
+                         "to a secret you reuse, or pseudonyms are only shuffled, "
+                         "not hidden.")
     ap.add_argument("--derive-sched", action="store_true",
                     help="also rebuild sched_15m.parquet from these jobs")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
+    with open(args.dump, encoding="utf-8") as fh:
+        raw_rows = sum(1 for _ in fh) - 1
     jobs = convert(args.dump, args.tz, args.accounts, args.anonymise)
     jp = os.path.join(args.out, "jobs.parquet")
     jobs.to_parquet(jp, index=False)
     print(f"wrote {jp}: {len(jobs):,} allocations, "
           f"{jobs['submit_ts'].min()} to {jobs['submit_ts'].max()} UTC")
+    print(reconcile(raw_rows, jobs))
     if args.derive_sched:
         derive_sched(jobs, os.path.join(args.out, "sched_15m.parquet"))
     print(SQUEUE_START_SAMPLER)
