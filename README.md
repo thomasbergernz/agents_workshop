@@ -29,7 +29,8 @@ seconds into two Parquet files.
 Open `kowhai_slurm_agents_workshop.ipynb` and run the setup cell in Part 0:
 
 ```python
-!pip install -q duckdb==1.5.5 matplotlib openai==2.53.0 pandas pyarrow tabulate==0.10.0
+!pip install -q duckdb==1.5.5 matplotlib==3.11.1 numpy==2.5.2 openai==2.53.0 \
+    pandas==3.0.5 pyarrow==25.0.1 tabulate==0.10.0
 ```
 
 Pinned so the workshop behaves the same everywhere, and safe to re-run. It is the same
