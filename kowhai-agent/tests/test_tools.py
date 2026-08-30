@@ -101,3 +101,69 @@ def test_unparseable_sql_is_returned_as_an_error_not_raised(toolbox):
     result = toolbox.call("run_sql", {
         "sql": "SELECT FROM WHERE submit_ts >"}).result
     assert result.startswith("Error")
+
+
+# --- The blanking pass must cover every way DuckDB spells a literal or an
+# --- identifier, not just the single-quoted form. Each of these satisfied the
+# --- time-filter guard while scanning the whole table.
+
+def test_a_dollar_quoted_literal_does_not_satisfy_the_guard(toolbox):
+    result = toolbox.call("run_sql", {
+        "sql": "SELECT COUNT(*) AS n FROM jobs WHERE job_name = $$submit_ts > x$$"}).result
+    assert result.startswith("Error: every query")
+
+
+def test_a_tagged_dollar_quoted_literal_does_not_satisfy_the_guard(toolbox):
+    result = toolbox.call("run_sql", {
+        "sql": "SELECT COUNT(*) AS n FROM jobs WHERE job_name = $q$submit_ts > x$q$"}).result
+    assert result.startswith("Error: every query")
+
+
+def test_a_time_column_inside_a_quoted_identifier_does_not_satisfy_the_guard(toolbox):
+    result = toolbox.call("run_sql", {
+        "sql": 'SELECT COUNT(*) AS "submit_ts > x" FROM jobs'}).result
+    assert result.startswith("Error: every query")
+
+
+def test_a_real_predicate_still_passes_alongside_those_forms(toolbox):
+    """The blanking must not eat the predicate itself."""
+    result = toolbox.call("run_sql", {
+        "sql": "SELECT COUNT(*) AS n FROM jobs "
+               "WHERE submit_ts > TIMESTAMP '2000-01-01' AND job_name = $$x$$"}).result
+    assert not result.startswith("Error")
+
+
+def test_the_row_cap_is_applied_by_the_database_not_by_pandas(toolbox):
+    """Six million rows must not be built in pandas so that fifty can be shown.
+
+    Both paths return the same text, so the only observable difference is the
+    work done: materialising the full result takes seconds, capping it in the
+    query takes milliseconds. The bound is ~100x looser than the measured gap.
+    """
+    call = toolbox.call("run_sql", {
+        "sql": "SELECT j.job_name FROM jobs j, range(1, 2000000) "
+               "WHERE j.submit_ts > TIMESTAMP '2000-01-01'"})
+    assert "truncated at" in call.result
+    assert call.seconds < 0.5, f"took {call.seconds:.2f}s — the full result was materialised"
+
+
+def test_an_underscore_in_a_lookup_fragment_is_not_a_wildcard(toolbox):
+    """`_` must mean a literal underscore, not "any character"."""
+    values = toolbox.call("list_values",
+                          {"column": "job_name", "contains": "_"}).result.split("\n")
+    assert "gromacs_prod" in values and "train_asr" in values   # real underscores
+    assert "analysis.R" not in values                            # matched only as a wildcard
+
+
+def test_a_percent_in_a_lookup_fragment_is_not_a_wildcard(toolbox):
+    assert toolbox.call("list_values", {"column": "job_name", "contains": "%"}) \
+        .result.startswith("No job_name value")
+
+
+def test_a_single_enormous_row_is_capped_by_bytes_not_just_rows(toolbox):
+    """One row can flood the context window without ever reaching the row cap,
+    and run_sql's own docstring tells the model to aggregate."""
+    result = toolbox.call("run_sql", {
+        "sql": "SELECT string_agg(repeat(job_name, 5000), ', ') AS everything "
+               "FROM jobs WHERE submit_ts > TIMESTAMP '2000-01-01'"}).result
+    assert len(result) < 50_000, f"returned {len(result):,} characters to the model"

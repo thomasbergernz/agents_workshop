@@ -24,10 +24,40 @@ LookupColumn = Literal["account", "project_name", "institution", "partition",
 
 _TIME_FILTER = re.compile(r"\b(" + "|".join(TIME_COLUMNS) + r")\s*(>=|>|<=|<|between)", re.IGNORECASE)
 
-# Comments and string literals are blanked before the time-filter search, so a
-# predicate cannot hide in `-- submit_ts > 1` or in 'submit_ts > x'. The literal
-# alternative comes first, so a `--` inside a string is not read as a comment.
-_COMMENT_OR_LITERAL = re.compile(r"'(?:[^']|'')*'|--[^\n]*|/\*.*?\*/", re.DOTALL)
+# Comments, string literals and quoted identifiers are all blanked before the
+# time-filter search, so a predicate cannot hide inside one. DuckDB spells a
+# literal four ways and each was a way past this guard: `-- submit_ts > 1`,
+# 'submit_ts > x', $$submit_ts > x$$, and `AS "submit_ts > x"` — the last being
+# an alias, which needs no predicate at all. Alternatives cannot collide because
+# each starts with a different character, so their order here does not matter.
+_COMMENT_OR_LITERAL = re.compile(
+    r"""'(?:[^']|'')*'          # 'single-quoted string'
+      | "(?:[^"]|"")*"          # "quoted identifier", including a column alias
+      | \$(\w*)\$.*?\$\1\$      # $$dollar-quoted$$ and $tag$tagged$tag$
+      | --[^\n]*                # -- line comment
+      | /\*.*?\*/               # /* block comment */
+    """,
+    re.DOTALL | re.VERBOSE,
+)
+
+# One row can flood the context window without ever reaching the row cap, and
+# run_sql's docstring tells the model to aggregate — which is how you get there.
+MAX_RESULT_CHARS = 20_000
+
+
+def _fits(rendered: str) -> str:
+    if len(rendered) <= MAX_RESULT_CHARS:
+        return rendered
+    return (rendered[:MAX_RESULT_CHARS] +
+            f"\n\n[cut at {MAX_RESULT_CHARS:,} characters. Return fewer or shorter "
+            "columns; aggregate to a number rather than concatenating text]")
+
+
+def _escape_like(fragment: str) -> str:
+    """Make a user fragment literal: `_` and `%` are ILIKE wildcards otherwise."""
+    for char in ("\\", "%", "_"):
+        fragment = fragment.replace(char, "\\" + char)
+    return fragment
 
 
 def _single_select(sql: str) -> str | None:
@@ -101,16 +131,21 @@ def build_toolbox(db: Database, inventory: dict[str, dict[str, Any]],
                 f"The data covers {window[0]} to {window[1]} UTC."
             )
         try:
-            frame = db.sql(sql).df()
+            # The cap belongs in the query. Calling .df() first builds the whole
+            # result in pandas -- outside DuckDB's memory accounting -- so a
+            # cross join is materialised in full just to show fifty rows of it.
+            # One extra row is enough to know there was more.
+            frame = db.sql(sql).limit(max_rows + 1).df()
         except Exception as exc:
             return f"Error: {exc}"
         if frame.empty:
             return ("0 rows. The query is valid but nothing matched it. Check your "
                     "filter values with list_values before concluding the answer is zero.")
         if len(frame) > max_rows:
-            return (frame.head(max_rows).to_markdown(index=False) +
-                    f"\n\n[truncated at {max_rows} rows. Aggregate, or add ORDER BY and LIMIT]")
-        return frame.to_markdown(index=False)
+            return _fits(frame.head(max_rows).to_markdown(index=False) +
+                         f"\n\n[truncated at {max_rows} rows. Aggregate, or add ORDER BY "
+                         "and LIMIT]")
+        return _fits(frame.to_markdown(index=False))
 
     @tool
     def list_values(column: LookupColumn, contains: str = "") -> str:
@@ -125,11 +160,12 @@ def build_toolbox(db: Database, inventory: dict[str, dict[str, Any]],
             return f"Error: column must be one of {list(LOOKUP_COLUMNS)}."
         frame = db.connection.execute(
             f"SELECT DISTINCT {column} AS value FROM jobs "
-            f"WHERE {column} ILIKE ? ORDER BY 1 LIMIT 100", [f"%{contains}%"]
+            f"WHERE {column} ILIKE ? ESCAPE '\\' ORDER BY 1 LIMIT 100",
+            [f"%{_escape_like(contains)}%"]
         ).df()
         if frame.empty:
             return f"No {column} value contains '{contains}'. Try a shorter fragment."
         suffix = "\n[first 100 only]" if len(frame) == 100 else ""
-        return "\n".join(frame["value"].astype(str)) + suffix
+        return _fits("\n".join(frame["value"].astype(str)) + suffix)
 
     return Toolbox.of(partition_info, run_sql, list_values)

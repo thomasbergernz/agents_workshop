@@ -14,6 +14,10 @@ from pathlib import Path
 
 import duckdb
 
+# Bounds the model can neither raise nor spill around; see Database.open.
+MEMORY_LIMIT = "2GB"
+THREADS = 4
+
 
 @dataclass
 class Database:
@@ -22,7 +26,8 @@ class Database:
     window_end: datetime
 
     @classmethod
-    def open(cls, data_dir: Path) -> Database:
+    def open(cls, data_dir: Path, memory_limit: str = MEMORY_LIMIT,
+             threads: int = THREADS) -> Database:
         jobs = data_dir / "jobs.parquet"
         sched = data_dir / "sched_15m.parquet"
         if not jobs.exists():
@@ -36,6 +41,20 @@ class Database:
         if sched.exists():
             con.execute(f"CREATE TABLE sched_15m AS SELECT * FROM '{sched}'")
         lo, hi = con.sql("SELECT MIN(submit_ts), MAX(end_ts) FROM jobs").fetchone()
+
+        # Order matters: lock_configuration freezes whatever is set at the time,
+        # so every limit has to be in place before it. Without a memory_limit
+        # the ceiling is the host's RAM, and because the filesystem is about to
+        # go away there is no spilling to fall back on -- so an expensive query
+        # would be an OOM kill of an unattended run rather than an error the
+        # model can read. A stated budget turns it into the latter.
+        con.execute(f"SET memory_limit = '{memory_limit}'")
+        con.execute(f"SET threads = {threads}")
+        # Otherwise an unknown table name resolves against Python locals in the
+        # calling frame: `SELECT * FROM self` answers with the Database object
+        # and the absolute path of the file it lives in, which then travels to
+        # the model, to the inference provider, and into logs/runs.jsonl.
+        con.execute("SET python_enable_replacements = false")
         con.execute("SET disabled_filesystems = 'LocalFileSystem'")
         con.execute("SET lock_configuration = true")
         return cls(con, lo, hi)
