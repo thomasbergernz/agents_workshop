@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
+import duckdb
+
 from .data import Database
 from .tooling import Toolbox, tool
 
@@ -21,7 +23,32 @@ LookupColumn = Literal["account", "project_name", "institution", "partition",
                        "state", "job_name", "user", "last_reason"]
 
 _TIME_FILTER = re.compile(r"\b(" + "|".join(TIME_COLUMNS) + r")\s*(>=|>|<=|<|between)", re.IGNORECASE)
-_READ_ONLY = re.compile(r"\s*(select|with)\b", re.IGNORECASE)
+
+# Comments and string literals are blanked before the time-filter search, so a
+# predicate cannot hide in `-- submit_ts > 1` or in 'submit_ts > x'. The literal
+# alternative comes first, so a `--` inside a string is not read as a comment.
+_COMMENT_OR_LITERAL = re.compile(r"'(?:[^']|'')*'|--[^\n]*|/\*.*?\*/", re.DOTALL)
+
+
+def _single_select(sql: str) -> str | None:
+    """An error message unless `sql` is exactly one SELECT statement, else None.
+
+    A prefix check only inspects the start of the string, so `SELECT 1; DROP
+    VIEW jobs` passed it. DuckDB's own parser counts the statements and names
+    their type, which is the same question asked of the thing that will run them.
+    """
+    try:
+        statements = duckdb.extract_statements(sql)
+    except Exception as exc:
+        return f"Error: {exc}"
+    if len(statements) != 1:
+        return ("Error: send exactly one statement. Anything after a semicolon "
+                "is rejected, including a second SELECT.")
+    # `!=`, not `is not`: duckdb's StatementType is a pybind11 enum and hands
+    # back a fresh object on each access, so identity never holds.
+    if statements[0].type != duckdb.StatementType.SELECT:
+        return "Error: only SELECT queries are allowed. This tool cannot modify data."
+    return None
 
 
 def load_inventory(path: Path) -> dict[str, dict[str, Any]]:
@@ -61,9 +88,10 @@ def build_toolbox(db: Database, inventory: dict[str, dict[str, Any]],
 
         sql: A single SELECT statement.
         """
-        if not _READ_ONLY.match(sql):
-            return "Error: only SELECT queries are allowed. This tool cannot modify data."
-        if not _TIME_FILTER.search(sql):
+        rejection = _single_select(sql)
+        if rejection is not None:
+            return rejection
+        if not _TIME_FILTER.search(_COMMENT_OR_LITERAL.sub(" ", sql)):
             return (
                 "Error: every query must filter on a timestamp column "
                 f"({', '.join(TIME_COLUMNS)}).\n"

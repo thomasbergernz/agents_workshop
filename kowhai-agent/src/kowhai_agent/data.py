@@ -1,4 +1,11 @@
-"""DuckDB over the Parquet exports. Read-only by construction."""
+"""DuckDB over the Parquet exports.
+
+The Parquet files are read once into tables rather than left behind lazy views,
+because the connection then has no further use for the filesystem and can give
+it up: `disabled_filesystems` closes `read_text`, `glob` and `COPY ... TO`, which
+a SELECT-only guard does not, and `lock_configuration` stops a query turning
+either setting back on. The cost is that the whole export is held in memory.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,10 +32,12 @@ class Database:
             )
         con = duckdb.connect(":memory:")
         con.execute("SET enable_progress_bar = false")
-        con.execute(f"CREATE VIEW jobs AS SELECT * FROM '{jobs}'")
+        con.execute(f"CREATE TABLE jobs AS SELECT * FROM '{jobs}'")
         if sched.exists():
-            con.execute(f"CREATE VIEW sched_15m AS SELECT * FROM '{sched}'")
+            con.execute(f"CREATE TABLE sched_15m AS SELECT * FROM '{sched}'")
         lo, hi = con.sql("SELECT MIN(submit_ts), MAX(end_ts) FROM jobs").fetchone()
+        con.execute("SET disabled_filesystems = 'LocalFileSystem'")
+        con.execute("SET lock_configuration = true")
         return cls(con, lo, hi)
 
     def sql(self, query: str):
