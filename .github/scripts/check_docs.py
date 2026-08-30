@@ -33,16 +33,49 @@ def notebook_install_line(path: Path) -> str:
     raise SystemExit(f"no pip install line found in {path}")
 
 
+def advertised_test_counts() -> list[tuple[Path, int]]:
+    """Both READMEs quote how many tests there are. They drift every time one
+    is added, and a number nobody checks is worse than no number."""
+    found = []
+    for readme in (ROOT / "README.md", ROOT / "kowhai-agent" / "README.md"):
+        for match in re.finditer(r"#\s*(\d+) tests, no network", readme.read_text(encoding="utf-8")):
+            found.append((readme, int(match.group(1))))
+    return found
+
+
+def collected_tests() -> int:
+    import subprocess
+    out = subprocess.run(["uv", "run", "pytest", "--collect-only", "-q"],
+                         cwd=ROOT / "kowhai-agent", capture_output=True, text=True).stdout
+    match = re.search(r"(\d+) tests? collected", out)
+    if not match:
+        raise SystemExit(f"could not read a test count from pytest:\n{out[-500:]}")
+    return int(match.group(1))
+
+
 def main() -> int:
     notebook = ROOT / "kowhai_slurm_agents_workshop.ipynb"
     readme = ROOT / "README.md"
+    failed = False
+
     expected = notebook_install_line(notebook)
     if expected not in normalise(readme.read_text(encoding="utf-8")):
         print(f"::error file=README.md::README does not quote the notebook's current "
               f"install line.\nnotebook has: {expected}", file=sys.stderr)
-        return 1
-    print(f"README matches the notebook: {expected}")
-    return 0
+        failed = True
+    else:
+        print(f"README matches the notebook: {expected}")
+
+    actual = collected_tests()
+    for path, claimed in advertised_test_counts():
+        name = path.relative_to(ROOT)
+        if claimed != actual:
+            print(f"::error file={name}::says {claimed} tests, pytest collects {actual}",
+                  file=sys.stderr)
+            failed = True
+        else:
+            print(f"{name} test count matches: {actual}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

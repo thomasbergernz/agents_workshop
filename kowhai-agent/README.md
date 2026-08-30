@@ -141,7 +141,7 @@ From the workshop's Part 12 rubric, most reporting work should not be an agent:
 ## Tests
 
 ```bash
-uv run pytest        # 71 tests, no network, no API key
+uv run pytest        # 82 tests, no network, no API key
 ```
 
 The suite covers spec generation, tool-error recovery inside the loop, iteration
