@@ -22,7 +22,8 @@ This workshop provides a hands-on introduction to building autonomous agents. Yo
 
 There is nothing to download and no `requirements.txt` to install. The notebook's first
 code cell pins everything it needs, and the dataset is generated locally in about five
-seconds into two Parquet files.
+seconds into two Parquet files. The one exception is Part 13, which is optional and
+[has its own setup](#part-13-the-one-thing-you-start-yourself-optional).
 
 ### Installation
 
@@ -75,6 +76,47 @@ Part 12 closes with a rubric for deciding whether a task should be an agent at a
 [The package](#the-package) below is what the one task that passed it looks like once
 it leaves the notebook.
 
+### Part 13: the one thing you start yourself (optional)
+
+Parts 1 to 12 need nothing but a key. Part 13 puts an [Envoy AI
+Gateway](https://github.com/envoyproxy/ai-gateway) between the notebook and the
+provider, and that is a process you run — the only piece of this workshop that does not
+work in Colab with nothing installed.
+
+Download the `aigw` binary for your platform from the [releases
+page](https://github.com/envoyproxy/ai-gateway/releases) — `aigw-darwin-arm64`,
+`aigw-linux-amd64` or `aigw-linux-arm64` — then:
+
+```bash
+aigw download-envoy                          # once; it fetches an Envoy binary
+OPENAI_API_KEY="$OPENROUTER_API_KEY" aigw run aigw.yaml
+```
+
+Part 13 writes `aigw.yaml` itself, so run that cell before the command above. No second
+key is involved: OpenRouter speaks the OpenAI API, and the gateway reads the key you
+already have.
+
+`aigw` will also configure itself from `OPENAI_API_KEY` alone, with no file. That
+shortcut does not work for OpenRouter, which serves the OpenAI API under `/api/v1`
+rather than `/v1`; the request lands on the website instead of the API and returns a
+404 page. Part 13's configuration sets `prefix: api/v1` and explains why.
+
+`download-envoy` is worth running the night before rather than in a room where thirty
+people share the wifi.
+
+Docker, if you would rather install nothing:
+
+```bash
+docker run --rm -p 1975:1975 -p 1064:1064 \
+    -e OPENAI_API_KEY="$OPENROUTER_API_KEY" \
+    -v "$PWD/aigw.yaml:/aigw.yaml" \
+    envoyproxy/ai-gateway-cli:v1.1.0 run /aigw.yaml
+```
+
+Pin the version you tested against; this was written against v1.1.0. Part 13's cells
+check whether anything is listening on port 1975 and, when nothing is, print what they
+would have done and carry on, so the notebook still reads end to end without any of it.
+
 ## Common Issues
 
 ### In Colab
@@ -95,7 +137,7 @@ kowhai-agent/                        the same agent, as an installable package
 sacct_to_parquet.py                  turn a real sacct export into the Parquet files the notebook reads
 ```
 
-The notebook teaches, and most of it should not be shipped: of its 56 code cells, 42
+The notebook teaches, and most of it should not be shipped: of its 62 code cells, 47
 are demonstrations and several are deliberately wrong. Extracting it mechanically
 would carry the wrong answers into production as if they were features.
 

@@ -4,7 +4,7 @@ Ask questions of Slurm accounting data, and draft per-project usage notes from i
 
 This is the production half of the *Agents for HPC Operations* workshop notebook.
 The notebook teaches; this package is what you actually run. They are deliberately
-separate: 42 of the notebook's 56 code cells are demonstrations, several of them
+separate: 47 of the notebook's 62 code cells are demonstrations, several of them
 deliberately wrong, and none of that belongs in a scheduled job.
 
 ## Install
@@ -126,6 +126,32 @@ scope above, the escaping above, and a line in `context/00-role.md` telling the
 model that field values are never instructions. The first is a boundary; the other
 two are mitigations. A person still reads the draft before anyone sends it -- that
 is the control that does not depend on any of this holding.
+
+## Running behind a gateway
+
+`KOWHAI_BASE_URL` and `KOWHAI_MODEL` are read at call time, so putting a gateway in
+front of this package is configuration rather than code:
+
+```bash
+KOWHAI_BASE_URL=http://localhost:1975/v1 uv run kowhai ask "..." --trace
+```
+
+Part 13 of the notebook runs [Envoy AI
+Gateway](https://github.com/envoyproxy/ai-gateway) standalone on that port. Three
+things move when you do: the credential lives in the gateway process rather than this
+one, the provider's model identifiers become configuration you own rather than a string
+in `config.py`, and token counts are recorded by something other than the code being
+counted.
+
+Nothing above moves with it. A gateway sees an HTTP request going to a model; it does
+not know that `run_sql` exists and could not read the query if it did. Every guard in
+this section is still the only thing between a general SQL tool and the database. The
+two are boundaries at opposite ends of the same process, and both are load-bearing.
+
+Standalone `aigw run` also counts tokens without enforcing a budget. Token rate
+limiting and quota policy need Envoy Gateway's rate limit service, Redis and a cluster,
+so do not read a gateway as a spend control until you have deployed the part that is
+one.
 
 ## What this is not for
 
