@@ -83,7 +83,9 @@ Gateway](https://github.com/envoyproxy/ai-gateway) between the notebook and the
 provider, and that is a process you run — the only piece of this workshop that does not
 work in Colab with nothing installed.
 
-Download the `aigw` binary for your platform from the [releases
+The `aigw` command-line tool is documented as experimental and under active
+development; this was written against v1.1.0, and its flags and generated configuration
+should be expected to move. Download the binary for your platform from the [releases
 page](https://github.com/envoyproxy/ai-gateway/releases) — `aigw-darwin-arm64`,
 `aigw-linux-amd64` or `aigw-linux-arm64` — then:
 
