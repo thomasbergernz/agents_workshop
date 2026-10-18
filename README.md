@@ -143,6 +143,48 @@ The notebook teaches, and most of it should not be shipped: of its 62 code cells
 are demonstrations and several are deliberately wrong. Extracting it mechanically
 would carry the wrong answers into production as if they were features.
 
+## Why Parquet, and not the raw sacct export
+
+The agent answers questions by writing SQL, which DuckDB runs directly against
+`jobs.parquet` and `sched_15m.parquet`. It never sees `sacct` output, and that is on
+purpose. A `sacct --parsable2` dump is pipe-delimited text where every field is a
+string, and much of what it means is encoded in formats the model would have to decode
+correctly in every query it writes:
+
+- **One job, several rows.** A job is reported as its allocation plus each of its steps
+  (`1234`, `1234.batch`, `1234.extern`). Count the rows and you overcount jobs.
+  `MaxRSS` is reported on the steps, not the allocation, so peak memory means taking a
+  maximum across rows that share a job ID. Array tasks hide their parent ID inside the
+  string, as in `1234_7`.
+- **Durations and memory are text.** `Elapsed` and `Timelimit` look like `2-00:00:00`,
+  `2-00:00` or `UNLIMITED`. `ReqMem` can be per node (`4Gn`), per CPU (`4Gc`) or per job,
+  and a bare number is bytes on some Slurm versions and megabytes on others. GPU counts
+  are only available inside the `ReqTRES` string.
+- **Times are local.** `sacct` prints times in the cluster's own time zone, so a
+  daylight-saving change makes one hour repeat or vanish.
+- **Other surprises.** `State` can read `CANCELLED by 12345`. Usernames are personal
+  data. Older Slurm calls `Planned` `Reserved`.
+
+A model can get each of these right if it is told. The trouble is that a query that gets
+one wrong still runs and returns a confident, plausible number. `sacct_to_parquet.py`
+decodes them once, in code you can read and test, and writes one row per allocation
+with typed columns: UTC timestamps, minutes, megabytes, a GPU count, a clean state and,
+with `--anonymise`, pseudonymous users. What remains for the model is the part only it
+can do, which is working out what the question means. This is the "description of the
+data" piece of the workshop. The schema cards can describe the data briefly and
+accurately only because the data has been made simple enough to describe that way.
+
+Parquet carries those types inside the file, so a timestamp stays a timestamp and a
+missing value stays NULL instead of an empty string. DuckDB queries the file directly,
+with no load step and no database to run, and it is the same file on a laptop, on Colab
+and in the package. A CSV would bring back the problem of guessing types on every read.
+
+Conversion does not fill in data that `sacct` never had. `est_start_ts` (Slurm does not
+keep its start-time predictions) and `gpu_util_pct` (that comes from profiling, not
+accounting) stay NULL. `--derive-sched` rebuilds `sched_15m` from the jobs themselves,
+so it cannot see anything outside the export. The converter's docstring covers each of
+these and how to collect them properly.
+
 ## The package
 
 `kowhai-agent/` is the other half — the same loop, the same three tools and the same
