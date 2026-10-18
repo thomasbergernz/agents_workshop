@@ -377,7 +377,7 @@ def build(rng):
     est = df["eligible_ts"].values + pd.to_timedelta(
         np.round(df["planned_min"].fillna(0).values * factor), unit="m")
     has_est = (df["planned_min"].fillna(0) > 4) & (rng.random(nn) < 0.72) & ~cp
-    df["est_start_ts"] = np.where(has_est, est, np.datetime64("NaT"))
+    df["est_start_ts"] = pd.Series(est, index=df.index).where(has_est)
 
     reason = np.where(df["planned_min"].fillna(0) > 4, "Priority", None)
     big = df["req_nodes"] >= 8
