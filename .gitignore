@@ -10,3 +10,6 @@ __pycache__/
 # Part 13 writes a gateway configuration beside the notebook. It contains the
 # literal ${OPENAI_API_KEY}, not a key, but there is no reason to commit it either.
 aigw.yaml
+
+# macOS Finder metadata, in every directory it has opened.
+.DS_Store
