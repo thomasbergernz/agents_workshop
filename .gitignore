@@ -6,3 +6,7 @@ data/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+
+# Part 13 writes a gateway configuration beside the notebook. It contains the
+# literal ${OPENAI_API_KEY}, not a key, but there is no reason to commit it either.
+aigw.yaml
