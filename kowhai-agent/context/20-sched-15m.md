@@ -15,7 +15,8 @@ Use it to answer "what state was the machine in at that moment".
   nodes_idle               nodes_total - nodes_alloc - nodes_down_drain. Idle nodes
                            beside a long queue mean jobs that do not fit, not spare
                            capacity. NULL wherever nodes_down_drain is
-  reservation_nodes        nodes held by a maintenance reservation
+  reservation_nodes        nodes held by a maintenance reservation. Already counted in
+                           nodes_down_drain, not in addition to it
   jobs_running             jobs occupying the partition
   jobs_pending             jobs eligible but not yet started. This is the backlog
   cpus_pending_requested   cores those pending jobs are asking for
