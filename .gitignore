@@ -13,3 +13,6 @@ aigw.yaml
 
 # macOS Finder metadata, in every directory it has opened.
 .DS_Store
+
+# Jupyter autosave copies.
+.ipynb_checkpoints/

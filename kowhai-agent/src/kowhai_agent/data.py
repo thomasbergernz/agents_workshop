@@ -44,7 +44,10 @@ class Database:
                 "convert a real sacct export with sacct_to_parquet.py."
             )
         con = duckdb.connect(":memory:")
-        con.execute("SET enable_progress_bar = false")
+        try:
+            con.execute("SET enable_progress_bar = false")
+        except duckdb.InvalidInputException:
+            pass  # in Jupyter without ipywidgets, where the bar is already off
         if account is None:
             con.execute(f"CREATE TABLE jobs AS SELECT * FROM '{jobs}'")
         else:
